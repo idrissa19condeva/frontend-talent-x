@@ -4,7 +4,7 @@ import { mockUserProfile } from "../mocks/userProfile";
 import * as FileSystem from "expo-file-system/legacy";
 
 // 🔹 Détection automatique de l’adresse selon le contexte
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+import { API_URL } from "./config";
 const USE_PROFILE_MOCK = process.env.EXPO_PUBLIC_USE_PROFILE_MOCK === "true";
 
 let mockProfileState: User = { ...mockUserProfile };

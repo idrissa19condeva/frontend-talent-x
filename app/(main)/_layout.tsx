@@ -23,6 +23,12 @@ export default function MainLayout() {
         </TouchableOpacity>
     );
 
+    const aboutBackButton = (
+        <TouchableOpacity onPress={() => router.replace("/(main)/account")} style={{ marginLeft: 10 }}>
+            <Ionicons name="arrow-back-outline" size={24} color="#0ea5e9" />
+        </TouchableOpacity>
+    );
+
     return (
         <Tabs
             screenOptions={{
@@ -126,6 +132,19 @@ export default function MainLayout() {
                     headerStyle: { backgroundColor: "rgba(15,23,42,0.6)" },
                     headerTransparent: false,
                     headerLeft: () => settingsBackButton,
+                }}
+            />
+            <Tabs.Screen
+                name="about"
+                options={{
+                    href: null,
+                    headerShown: true,
+                    title: "À propos",
+                    headerTitleAlign: "center",
+                    headerTintColor: "#0ea5e9",
+                    headerStyle: { backgroundColor: "rgba(15,23,42,0.6)" },
+                    headerTransparent: false,
+                    headerLeft: () => aboutBackButton,
                 }}
             />
             <Tabs.Screen

@@ -166,11 +166,6 @@ export default function TrainingSessionsListScreen() {
                     ? "Créez un programme."
                     : "Quand un coach vous ajoute à une séance, elle apparaîtra ici."}
             </Text>
-            {isOwnedView ? (
-                <Button mode="contained" onPress={handleCreate} buttonColor="#22d3ee" textColor="#02111f">
-                    Créer une séance
-                </Button>
-            ) : null}
         </View>
     );
 

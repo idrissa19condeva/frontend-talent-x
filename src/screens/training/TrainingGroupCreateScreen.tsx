@@ -178,7 +178,7 @@ export default function TrainingGroupCreateScreen() {
                                         onChangeText={setName}
                                         mode="outlined"
                                         style={styles.input}
-                                        placeholder="Ex: Sprint Club Lyon"
+                                        placeholder="Ex: Couloir V"
                                         autoCapitalize="words"
                                         autoCorrect
                                         disabled={submitting}
@@ -191,7 +191,7 @@ export default function TrainingGroupCreateScreen() {
                                         style={[styles.input, styles.textarea]}
                                         multiline
                                         numberOfLines={4}
-                                        placeholder="Mission, niveau recherché, créneaux…"
+                                        placeholder="Disciplines, créneaux…"
                                         disabled={submitting}
                                     />
 

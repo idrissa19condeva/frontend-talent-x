@@ -521,10 +521,13 @@ const styles = StyleSheet.create({
         color: "#f8fafc",
         fontSize: 16,
         fontWeight: "700",
+        textAlign: "center",
     },
     emptyText: {
         color: "#94a3b8",
         marginTop: 6,
         lineHeight: 18,
+        textAlign: "center",
+        fontStyle: "italic",
     },
 });

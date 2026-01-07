@@ -1,7 +1,7 @@
 import http from "./http";
 import { CreateTrainingBlockPayload, TrainingBlock, UpdateTrainingBlockPayload } from "../types/trainingBlock";
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+import { API_URL } from "./config";
 const BLOCK_ENDPOINT = `${API_URL}/training-blocks`;
 
 export const listTrainingBlocks = async (): Promise<TrainingBlock[]> => {

@@ -7,7 +7,7 @@ import {
     UpdateTrainingTemplatePayload,
 } from "../types/trainingTemplate";
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+import { API_URL } from "./config";
 const TEMPLATE_ENDPOINT = `${API_URL}/training-templates`;
 
 export const listTrainingTemplates = async (): Promise<TrainingTemplate[]> => {

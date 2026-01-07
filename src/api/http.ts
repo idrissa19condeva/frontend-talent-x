@@ -1,9 +1,12 @@
 import axios, { AxiosError, AxiosInstance, AxiosResponse, InternalAxiosRequestConfig } from "axios";
 import * as SecureStore from "expo-secure-store";
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+import { API_URL } from "./config";
 
-const client: AxiosInstance = axios.create({ baseURL: API_URL });
+const client: AxiosInstance = axios.create({
+    baseURL: API_URL,
+    timeout: 20000,
+});
 
 const ACCESS_KEY = "token";
 const REFRESH_KEY = "refreshToken";
@@ -24,6 +27,13 @@ let refreshPromise: Promise<string | null> | null = null;
 let isRefreshing = false;
 
 client.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+    if (__DEV__) {
+        const url = String(config.url || "");
+        const baseURL = String((config as any).baseURL || "");
+        const full = url.startsWith("http") ? url : `${baseURL}${url}`;
+        console.debug("HTTP →", config.method?.toUpperCase(), full);
+    }
+
     const token = await getAccessToken();
     if (token) {
         const headers = (config.headers ?? {}) as Record<string, any>;
@@ -36,6 +46,15 @@ client.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
 client.interceptors.response.use(
     (response: AxiosResponse) => response,
     async (error: AxiosError) => {
+        if (__DEV__) {
+            const cfg: any = error.config || {};
+            const url = String(cfg.url || "");
+            const baseURL = String(cfg.baseURL || "");
+            const full = url.startsWith("http") ? url : `${baseURL}${url}`;
+            const status = error.response?.status;
+            console.warn("HTTP ✖", status ?? "(no response)", full, error.message);
+        }
+
         const status = error.response?.status;
         const originalRequest: any = error.config;
 

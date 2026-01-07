@@ -1,5 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import {
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    Keyboard,
+    KeyboardAvoidingView,
+    KeyboardEvent,
+    Platform,
+    Pressable,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    View,
+} from "react-native";
 import { Button, Text, TextInput } from "react-native-paper";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -73,6 +86,12 @@ export default function CreateTrainingSessionWizardScreen() {
     const wasFocusedRef = useRef<boolean>(true);
 
     const [submitting, setSubmitting] = useState(false);
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
+    const [placeFocused, setPlaceFocused] = useState(false);
+
+    const scrollViewRef = useRef<ScrollView | null>(null);
+    const placeFieldRef = useRef<View | null>(null);
+    const scrollYRef = useRef(0);
 
     const [date, setDate] = useState<Date>(() => new Date());
     const [time, setTime] = useState("09:00");
@@ -84,6 +103,58 @@ export default function CreateTrainingSessionWizardScreen() {
     const [timePickerVisible, setTimePickerVisible] = useState(false);
 
     const { templates, loading: templatesLoading, error: templatesError, refresh: refreshTemplates } = useTrainingTemplatesList();
+
+    useEffect(() => {
+        const showEvent = Platform.OS === "android" ? "keyboardDidShow" : "keyboardWillShow";
+        const hideEvent = Platform.OS === "android" ? "keyboardDidHide" : "keyboardWillHide";
+
+        const handleShow = (event: KeyboardEvent) => {
+            const height = event.endCoordinates?.height ?? 0;
+            setKeyboardHeight(height);
+        };
+
+        const handleHide = () => setKeyboardHeight(0);
+
+        const showSub = Keyboard.addListener(showEvent, handleShow);
+        const hideSub = Keyboard.addListener(hideEvent, handleHide);
+
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, []);
+
+    const ensurePlaceFieldVisible = useCallback(() => {
+        if (!keyboardHeight) return;
+        if (step !== 1) return;
+        if (!placeFieldRef.current) return;
+        if (!scrollViewRef.current) return;
+
+        placeFieldRef.current.measureInWindow((_x, y, _w, h) => {
+            const windowHeight = Dimensions.get("window").height;
+            const keyboardTop = windowHeight - keyboardHeight;
+            const fieldBottom = y + h;
+            const margin = 16;
+
+            if (fieldBottom + margin <= keyboardTop) {
+                return;
+            }
+
+            const delta = fieldBottom + margin - keyboardTop;
+            const nextY = Math.max(0, scrollYRef.current + delta);
+            scrollViewRef.current?.scrollTo({ y: nextY, animated: true });
+        });
+    }, [keyboardHeight, step]);
+
+    useEffect(() => {
+        if (!placeFocused) return;
+        if (!keyboardHeight) return;
+        if (step !== 1) return;
+        const timer = setTimeout(() => {
+            ensurePlaceFieldVisible();
+        }, 50);
+        return () => clearTimeout(timer);
+    }, [ensurePlaceFieldVisible, keyboardHeight, placeFocused, step]);
 
     useEffect(() => {
         pendingTemplateReturnKeyRef.current = pendingTemplateReturnKey;
@@ -219,31 +290,282 @@ export default function CreateTrainingSessionWizardScreen() {
 
     const stepLabel = step === 1 ? "Planification" : step === 2 ? "Ajouter un template" : "Finalisation";
 
+    const bottomSpacing = Math.max(insets.bottom, 0);
+    const keyboardVerticalOffset = Platform.OS === "ios" ? 64 : 0;
+    const scrollBottomPadding = bottomSpacing + (keyboardHeight > 0 ? keyboardHeight + 32 : 0);
+
     return (
         <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
-            <ScrollView
-                style={styles.scroll}
-                contentContainerStyle={[styles.container, { paddingTop: insets.top + 10, paddingBottom: insets.bottom + 20 }]}
-                refreshControl={
-                    step === 2 ? <RefreshControl refreshing={templatesLoading} onRefresh={refreshTemplates} tintColor="#22d3ee" /> : undefined
-                }
+            <KeyboardAvoidingView
+                style={{ flex: 1 }}
+                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                keyboardVerticalOffset={keyboardVerticalOffset}
             >
-                <View style={styles.header}>
-                    <Text style={styles.title}>Créer une séance</Text>
-                    <Text style={styles.subtitle}>{stepLabel}</Text>
-                </View>
+                <ScrollView
+                    ref={(node) => {
+                        scrollViewRef.current = node;
+                    }}
+                    style={styles.scroll}
+                    keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+                    keyboardShouldPersistTaps="handled"
+                    automaticallyAdjustKeyboardInsets
+                    scrollEventThrottle={16}
+                    onScroll={(event) => {
+                        scrollYRef.current = event.nativeEvent.contentOffset.y;
+                    }}
+                    contentContainerStyle={[
+                        styles.container,
+                        { paddingTop: insets.top + 10, paddingBottom: scrollBottomPadding + 20 },
+                    ]}
+                    refreshControl={
+                        step === 2 ? (
+                            <RefreshControl refreshing={templatesLoading} onRefresh={refreshTemplates} tintColor="#22d3ee" />
+                        ) : undefined
+                    }
+                >
+                    <View style={styles.header}>
+                        <Text style={styles.title}>Créer une séance</Text>
+                        <Text style={styles.subtitle}>{stepLabel}</Text>
+                    </View>
 
-                <View style={styles.card}>
-                    {step === 1 ? (
-                        <>
-                            <View style={{ gap: 6 }}>
-                                <Text style={styles.fieldLabel}>Date</Text>
-                                <Pressable
-                                    accessibilityRole="button"
-                                    onPress={() => setDatePickerVisible(true)}
-                                    style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
+                    <View style={styles.card}>
+                        {step === 1 ? (
+                            <>
+                                <View style={{ gap: 6 }}>
+                                    <Text style={styles.fieldLabel}>Date</Text>
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        onPress={() => setDatePickerVisible(true)}
+                                        style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
+                                    >
+                                        <Text style={styles.pickerValue}>
+                                            {date.toLocaleDateString("fr-FR", {
+                                                weekday: "long",
+                                                day: "2-digit",
+                                                month: "long",
+                                                year: "numeric",
+                                            })}
+                                        </Text>
+                                        <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
+                                    </Pressable>
+                                </View>
+
+                                {datePickerVisible ? (
+                                    <DateTimePicker
+                                        value={date}
+                                        mode="date"
+                                        display="default"
+                                        onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                                            setDatePickerVisible(false);
+                                            if (event.type === "set" && selectedDate) {
+                                                setDate(selectedDate);
+                                            }
+                                        }}
+                                    />
+                                ) : null}
+
+                                {durationPickerVisible ? (
+                                    <DateTimePicker
+                                        value={buildDurationDate(durationMinutes)}
+                                        mode="time"
+                                        display="default"
+                                        is24Hour
+                                        onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                                            setDurationPickerVisible(false);
+                                            if (event.type === "set" && selectedDate) {
+                                                setDurationMinutes(minutesFromDate(selectedDate));
+                                            }
+                                        }}
+                                    />
+                                ) : null}
+
+                                {timePickerVisible ? (
+                                    <DateTimePicker
+                                        value={parseTimeToDate(time) ?? new Date()}
+                                        mode="time"
+                                        display="default"
+                                        is24Hour
+                                        onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                                            setTimePickerVisible(false);
+                                            if (event.type === "set" && selectedDate) {
+                                                setTime(formatTimeValue(selectedDate));
+                                            }
+                                        }}
+                                    />
+                                ) : null}
+
+                                <View style={[styles.pickerRow, { marginTop: 14 }]}>
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.cardTitle}>Heure de début</Text>
+                                        <Pressable
+                                            accessibilityRole="button"
+                                            onPress={() => setTimePickerVisible(true)}
+                                            style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
+                                        >
+                                            <Text style={styles.pickerValue}>{normalizeTime(time) ?? "Choisir"}</Text>
+                                            <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
+                                        </Pressable>
+                                    </View>
+
+                                    <View style={{ flex: 1 }}>
+                                        <Text style={styles.cardTitle}>Durée</Text>
+                                        <Pressable
+                                            accessibilityRole="button"
+                                            onPress={() => setDurationPickerVisible(true)}
+                                            style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
+                                        >
+                                            <Text style={styles.pickerValue}>
+                                                {formatDurationLabel(durationMinutes) ?? `${durationMinutes}min`}
+                                            </Text>
+                                            <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
+                                        </Pressable>
+                                    </View>
+                                </View>
+
+                                <View
+                                    ref={(node) => {
+                                        placeFieldRef.current = node;
+                                    }}
+                                    collapsable={false}
                                 >
-                                    <Text style={styles.pickerValue}>
+                                    <Text style={[styles.cardTitle, { marginTop: 14 }]}>Lieu</Text>
+                                    <TextInput
+                                        mode="outlined"
+                                        value={place}
+                                        onChangeText={setPlace}
+                                        placeholder="Stade, piste, salle…"
+                                        autoCapitalize="sentences"
+                                        autoCorrect={false}
+                                        onFocus={() => {
+                                            setPlaceFocused(true);
+                                            setTimeout(() => {
+                                                ensurePlaceFieldVisible();
+                                            }, 50);
+                                        }}
+                                        onBlur={() => setPlaceFocused(false)}
+                                        style={styles.input}
+                                    />
+                                </View>
+                            </>
+                        ) : null}
+
+                        {step === 2 ? (
+                            <>
+                                {templatesError ? (
+                                    <View style={styles.stateContainer}>
+                                        <Text style={styles.stateTitle}>Impossible de charger</Text>
+                                        <Text style={styles.stateSubtitle}>{templatesError}</Text>
+                                    </View>
+                                ) : null}
+
+                                <View style={styles.choiceRow}>
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        onPress={() => {
+                                            if (!canGoNextFromStep1) {
+                                                Alert.alert("Planification requise", "Renseigne d'abord la date, l'heure, la durée et le lieu.");
+                                                setStep(1);
+                                                return;
+                                            }
+
+                                            const returnKey = `wizard-new-template-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                                            setPendingTemplateReturnKey(returnKey);
+                                            router.push({
+                                                pathname: "/(main)/training/templates/new",
+                                                params: { returnKey } as any,
+                                            });
+                                        }}
+                                        style={({ pressed }) => [
+                                            styles.choiceCard,
+                                            pressed && styles.choiceCardPressed,
+                                        ]}
+                                    >
+                                        <View style={styles.choiceHeader}>
+                                            <MaterialCommunityIcons name="file-outline" size={18} color="#38bdf8" />
+                                            <Text style={styles.choiceTitle}>Séance vierge</Text>
+                                        </View>
+                                        <Text style={styles.choiceSubtitle}>Créer un nouveau template</Text>
+                                    </Pressable>
+
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        onPress={() => setTemplatePickerEnabled(true)}
+                                        style={({ pressed }) => [
+                                            styles.choiceCard,
+                                            templatePickerEnabled && styles.choiceCardActive,
+                                            pressed && styles.choiceCardPressed,
+                                        ]}
+                                    >
+                                        <View style={styles.choiceHeader}>
+                                            <MaterialCommunityIcons name="bookmark-multiple-outline" size={18} color="#38bdf8" />
+                                            <Text style={styles.choiceTitle}>Template</Text>
+                                        </View>
+                                        <Text style={styles.choiceSubtitle}>Snapshot figé</Text>
+                                    </Pressable>
+                                </View>
+
+                                {templatePickerEnabled ? (
+                                    <View style={{ marginTop: 10, gap: 10 }}>
+                                        {templatesLoading && !sortedTemplates.length ? (
+                                            <View style={styles.loadingBox}>
+                                                <ActivityIndicator size="small" color="#22d3ee" />
+                                            </View>
+                                        ) : null}
+
+                                        {!templatesLoading && !sortedTemplates.length ? (
+                                            <View style={styles.stateContainer}>
+                                                <Text style={styles.stateTitle}>Aucun template</Text>
+                                                <Text style={styles.stateSubtitle}>Crée un template pour l&apos;utiliser ici.</Text>
+                                            </View>
+                                        ) : (
+                                            <View style={styles.list}>
+                                                {sortedTemplates.map((template) => {
+                                                    const active = selectedTemplateId === template.id;
+                                                    return (
+                                                        <Pressable
+                                                            key={template.id}
+                                                            accessibilityRole="button"
+                                                            onPress={() => {
+                                                                setSelectedTemplateId(template.id);
+                                                                setSelectedTemplateTitle(template.title);
+                                                            }}
+                                                            style={({ pressed }) => [
+                                                                styles.templateRow,
+                                                                active && styles.templateRowActive,
+                                                                pressed && styles.templateRowPressed,
+                                                            ]}
+                                                        >
+                                                            <View style={styles.templateRowIcon}>
+                                                                <MaterialCommunityIcons
+                                                                    name={active ? "check-circle" : "checkbox-blank-circle-outline"}
+                                                                    size={16}
+                                                                    color={active ? "#22d3ee" : "#94a3b8"}
+                                                                />
+                                                            </View>
+                                                            <View style={styles.templateRowMain}>
+                                                                <Text style={styles.templateRowTitle}>{template.title}</Text>
+                                                                <Text style={styles.templateRowSubtitle}>{formatTemplateSubtitle(template)}</Text>
+                                                            </View>
+                                                        </Pressable>
+                                                    );
+                                                })}
+                                            </View>
+                                        )}
+                                    </View>
+                                ) : null}
+                            </>
+                        ) : null}
+
+                        {step === 3 ? (
+                            <>
+                                <View style={styles.recapSection}>
+                                    <View style={styles.recapHeader}>
+                                        <Text style={styles.recapTitle}>Planification</Text>
+                                        <Button mode="text" onPress={() => setStep(1)} textColor="#22d3ee">
+                                            Modifier
+                                        </Button>
+                                    </View>
+                                    <Text style={styles.recapLine}>
                                         {date.toLocaleDateString("fr-FR", {
                                             weekday: "long",
                                             day: "2-digit",
@@ -251,272 +573,60 @@ export default function CreateTrainingSessionWizardScreen() {
                                             year: "numeric",
                                         })}
                                     </Text>
-                                    <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
-                                </Pressable>
-                            </View>
-
-                            {datePickerVisible ? (
-                                <DateTimePicker
-                                    value={date}
-                                    mode="date"
-                                    display="default"
-                                    onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
-                                        setDatePickerVisible(false);
-                                        if (event.type === "set" && selectedDate) {
-                                            setDate(selectedDate);
-                                        }
-                                    }}
-                                />
-                            ) : null}
-
-                            {durationPickerVisible ? (
-                                <DateTimePicker
-                                    value={buildDurationDate(durationMinutes)}
-                                    mode="time"
-                                    display="default"
-                                    is24Hour
-                                    onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
-                                        setDurationPickerVisible(false);
-                                        if (event.type === "set" && selectedDate) {
-                                            setDurationMinutes(minutesFromDate(selectedDate));
-                                        }
-                                    }}
-                                />
-                            ) : null}
-
-                            {timePickerVisible ? (
-                                <DateTimePicker
-                                    value={parseTimeToDate(time) ?? new Date()}
-                                    mode="time"
-                                    display="default"
-                                    is24Hour
-                                    onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
-                                        setTimePickerVisible(false);
-                                        if (event.type === "set" && selectedDate) {
-                                            setTime(formatTimeValue(selectedDate));
-                                        }
-                                    }}
-                                />
-                            ) : null}
-
-                            <View style={[styles.pickerRow, { marginTop: 14 }]}>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.cardTitle}>Heure de début</Text>
-                                    <Pressable
-                                        accessibilityRole="button"
-                                        onPress={() => setTimePickerVisible(true)}
-                                        style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
-                                    >
-                                        <Text style={styles.pickerValue}>{normalizeTime(time) ?? "Choisir"}</Text>
-                                        <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
-                                    </Pressable>
-                                </View>
-
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.cardTitle}>Durée</Text>
-                                    <Pressable
-                                        accessibilityRole="button"
-                                        onPress={() => setDurationPickerVisible(true)}
-                                        style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
-                                    >
-                                        <Text style={styles.pickerValue}>
-                                            {formatDurationLabel(durationMinutes) ?? `${durationMinutes}min`}
-                                        </Text>
-                                        <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
-                                    </Pressable>
-                                </View>
-                            </View>
-
-                            <Text style={[styles.cardTitle, { marginTop: 14 }]}>Lieu</Text>
-                            <TextInput
-                                mode="outlined"
-                                value={place}
-                                onChangeText={setPlace}
-                                placeholder="Stade, piste, salle…"
-                                autoCapitalize="sentences"
-                                autoCorrect={false}
-                                style={styles.input}
-                            />
-                        </>
-                    ) : null}
-
-                    {step === 2 ? (
-                        <>
-                            {templatesError ? (
-                                <View style={styles.stateContainer}>
-                                    <Text style={styles.stateTitle}>Impossible de charger</Text>
-                                    <Text style={styles.stateSubtitle}>{templatesError}</Text>
-                                </View>
-                            ) : null}
-
-                            <View style={styles.choiceRow}>
-                                <Pressable
-                                    accessibilityRole="button"
-                                    onPress={() => {
-                                        if (!canGoNextFromStep1) {
-                                            Alert.alert("Planification requise", "Renseigne d'abord la date, l'heure, la durée et le lieu.");
-                                            setStep(1);
-                                            return;
-                                        }
-
-                                        const returnKey = `wizard-new-template-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-                                        setPendingTemplateReturnKey(returnKey);
-                                        router.push({
-                                            pathname: "/(main)/training/templates/new",
-                                            params: { returnKey } as any,
-                                        });
-                                    }}
-                                    style={({ pressed }) => [
-                                        styles.choiceCard,
-                                        pressed && styles.choiceCardPressed,
-                                    ]}
-                                >
-                                    <View style={styles.choiceHeader}>
-                                        <MaterialCommunityIcons name="file-outline" size={18} color="#38bdf8" />
-                                        <Text style={styles.choiceTitle}>Séance vierge</Text>
-                                    </View>
-                                    <Text style={styles.choiceSubtitle}>Créer un nouveau template</Text>
-                                </Pressable>
-
-                                <Pressable
-                                    accessibilityRole="button"
-                                    onPress={() => setTemplatePickerEnabled(true)}
-                                    style={({ pressed }) => [
-                                        styles.choiceCard,
-                                        templatePickerEnabled && styles.choiceCardActive,
-                                        pressed && styles.choiceCardPressed,
-                                    ]}
-                                >
-                                    <View style={styles.choiceHeader}>
-                                        <MaterialCommunityIcons name="bookmark-multiple-outline" size={18} color="#38bdf8" />
-                                        <Text style={styles.choiceTitle}>Template</Text>
-                                    </View>
-                                    <Text style={styles.choiceSubtitle}>Snapshot figé</Text>
-                                </Pressable>
-                            </View>
-
-                            {templatePickerEnabled ? (
-                                <View style={{ marginTop: 10, gap: 10 }}>
-                                    {templatesLoading && !sortedTemplates.length ? (
-                                        <View style={styles.loadingBox}>
-                                            <ActivityIndicator size="small" color="#22d3ee" />
-                                        </View>
-                                    ) : null}
-
-                                    {!templatesLoading && !sortedTemplates.length ? (
-                                        <View style={styles.stateContainer}>
-                                            <Text style={styles.stateTitle}>Aucun template</Text>
-                                            <Text style={styles.stateSubtitle}>Crée un template pour l&apos;utiliser ici.</Text>
-                                        </View>
-                                    ) : (
-                                        <View style={styles.list}>
-                                            {sortedTemplates.map((template) => {
-                                                const active = selectedTemplateId === template.id;
-                                                return (
-                                                    <Pressable
-                                                        key={template.id}
-                                                        accessibilityRole="button"
-                                                        onPress={() => {
-                                                            setSelectedTemplateId(template.id);
-                                                            setSelectedTemplateTitle(template.title);
-                                                        }}
-                                                        style={({ pressed }) => [
-                                                            styles.templateRow,
-                                                            active && styles.templateRowActive,
-                                                            pressed && styles.templateRowPressed,
-                                                        ]}
-                                                    >
-                                                        <View style={styles.templateRowIcon}>
-                                                            <MaterialCommunityIcons
-                                                                name={active ? "check-circle" : "checkbox-blank-circle-outline"}
-                                                                size={16}
-                                                                color={active ? "#22d3ee" : "#94a3b8"}
-                                                            />
-                                                        </View>
-                                                        <View style={styles.templateRowMain}>
-                                                            <Text style={styles.templateRowTitle}>{template.title}</Text>
-                                                            <Text style={styles.templateRowSubtitle}>{formatTemplateSubtitle(template)}</Text>
-                                                        </View>
-                                                    </Pressable>
-                                                );
-                                            })}
-                                        </View>
-                                    )}
-                                </View>
-                            ) : null}
-                        </>
-                    ) : null}
-
-                    {step === 3 ? (
-                        <>
-                            <View style={styles.recapSection}>
-                                <View style={styles.recapHeader}>
-                                    <Text style={styles.recapTitle}>Planification</Text>
-                                    <Button mode="text" onPress={() => setStep(1)} textColor="#22d3ee">
-                                        Modifier
-                                    </Button>
-                                </View>
-                                <Text style={styles.recapLine}>
-                                    {date.toLocaleDateString("fr-FR", {
-                                        weekday: "long",
-                                        day: "2-digit",
-                                        month: "long",
-                                        year: "numeric",
-                                    })}
-                                </Text>
-                                <Text style={styles.recapLine}>
-                                    {normalizeTime(time) ?? "—"} · {formatDurationLabel(durationMinutes) ?? `${durationMinutes}min`}
-                                </Text>
-                                <Text style={styles.recapLine}>{place.trim()}</Text>
-                            </View>
-
-                            <View style={styles.recapSection}>
-                                <View style={styles.recapHeader}>
-                                    <Text style={styles.recapTitle}>Contenu</Text>
-                                    <Button mode="text" onPress={() => setStep(2)} textColor="#22d3ee">
-                                        Modifier
-                                    </Button>
-                                </View>
-                                <>
-                                    <Text style={styles.recapLine}>Template</Text>
-                                    <Text style={styles.recapLineStrong}>
-                                        {selectedTemplate?.title || selectedTemplateTitle || "Template sélectionné"}
+                                    <Text style={styles.recapLine}>
+                                        {normalizeTime(time) ?? "—"} · {formatDurationLabel(durationMinutes) ?? `${durationMinutes}min`}
                                     </Text>
-                                </>
-                            </View>
-                        </>
-                    ) : null}
+                                    <Text style={styles.recapLine}>{place.trim()}</Text>
+                                </View>
 
-                    <View style={styles.footerRow}>
-                        <Button mode="outlined" onPress={goBack} textColor="#cbd5e1" disabled={submitting}>
-                            Retour
-                        </Button>
+                                <View style={styles.recapSection}>
+                                    <View style={styles.recapHeader}>
+                                        <Text style={styles.recapTitle}>Contenu</Text>
+                                        <Button mode="text" onPress={() => setStep(2)} textColor="#22d3ee">
+                                            Modifier
+                                        </Button>
+                                    </View>
+                                    <>
+                                        <Text style={styles.recapLine}>Template</Text>
+                                        <Text style={styles.recapLineStrong}>
+                                            {selectedTemplate?.title || selectedTemplateTitle || "Template sélectionné"}
+                                        </Text>
+                                    </>
+                                </View>
+                            </>
+                        ) : null}
 
-                        {step < 3 ? (
-                            <Button
-                                mode="contained"
-                                onPress={goNext}
-                                buttonColor="#22d3ee"
-                                textColor="#02111f"
-                                disabled={submitting || (step === 1 ? !canGoNextFromStep1 : !canGoNextFromStep2)}
-                            >
-                                Suivant
+                        <View style={styles.footerRow}>
+                            <Button mode="outlined" onPress={goBack} textColor="#cbd5e1" disabled={submitting}>
+                                Retour
                             </Button>
-                        ) : (
-                            <Button
-                                mode="contained"
-                                onPress={handleCreate}
-                                buttonColor="#22d3ee"
-                                textColor="#02111f"
-                                loading={submitting}
-                                disabled={!canSubmit || submitting}
-                            >
-                                Créer la séance
-                            </Button>
-                        )}
+
+                            {step < 3 ? (
+                                <Button
+                                    mode="contained"
+                                    onPress={goNext}
+                                    buttonColor="#22d3ee"
+                                    textColor="#02111f"
+                                    disabled={submitting || (step === 1 ? !canGoNextFromStep1 : !canGoNextFromStep2)}
+                                >
+                                    Suivant
+                                </Button>
+                            ) : (
+                                <Button
+                                    mode="contained"
+                                    onPress={handleCreate}
+                                    buttonColor="#22d3ee"
+                                    textColor="#02111f"
+                                    loading={submitting}
+                                    disabled={!canSubmit || submitting}
+                                >
+                                    Créer la séance
+                                </Button>
+                            )}
+                        </View>
                     </View>
-                </View>
-            </ScrollView>
+                </ScrollView>
+            </KeyboardAvoidingView>
         </SafeAreaView>
     );
 }

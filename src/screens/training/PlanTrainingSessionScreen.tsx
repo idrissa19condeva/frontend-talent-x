@@ -1,5 +1,17 @@
-import React, { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    Keyboard,
+    KeyboardAvoidingView,
+    KeyboardEvent,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    View,
+} from "react-native";
 import { Button, Text, TextInput } from "react-native-paper";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -67,6 +79,12 @@ export default function PlanTrainingSessionScreen() {
     const { createSession } = useTraining();
 
     const [submitting, setSubmitting] = useState(false);
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
+    const [placeFocused, setPlaceFocused] = useState(false);
+
+    const scrollViewRef = useRef<ScrollView | null>(null);
+    const placeFieldRef = useRef<View | null>(null);
+    const scrollYRef = useRef(0);
 
     const [date, setDate] = useState<Date>(() => new Date());
     const [time, setTime] = useState("09:00");
@@ -84,6 +102,56 @@ export default function PlanTrainingSessionScreen() {
         if (!place.trim()) return false;
         return true;
     }, [athleteId, time, durationMinutes, place]);
+
+    useEffect(() => {
+        const showEvent = Platform.OS === "android" ? "keyboardDidShow" : "keyboardWillShow";
+        const hideEvent = Platform.OS === "android" ? "keyboardDidHide" : "keyboardWillHide";
+
+        const handleShow = (event: KeyboardEvent) => {
+            const height = event.endCoordinates?.height ?? 0;
+            setKeyboardHeight(height);
+        };
+
+        const handleHide = () => setKeyboardHeight(0);
+
+        const showSub = Keyboard.addListener(showEvent, handleShow);
+        const hideSub = Keyboard.addListener(hideEvent, handleHide);
+
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+        };
+    }, []);
+
+    const ensurePlaceFieldVisible = useCallback(() => {
+        if (!keyboardHeight) return;
+        if (!placeFieldRef.current) return;
+        if (!scrollViewRef.current) return;
+
+        placeFieldRef.current.measureInWindow((_x, y, _w, h) => {
+            const windowHeight = Dimensions.get("window").height;
+            const keyboardTop = windowHeight - keyboardHeight;
+            const fieldBottom = y + h;
+            const margin = 16;
+
+            if (fieldBottom + margin <= keyboardTop) {
+                return;
+            }
+
+            const delta = fieldBottom + margin - keyboardTop;
+            const nextY = Math.max(0, scrollYRef.current + delta);
+            scrollViewRef.current?.scrollTo({ y: nextY, animated: true });
+        });
+    }, [keyboardHeight]);
+
+    useEffect(() => {
+        if (!placeFocused) return;
+        if (!keyboardHeight) return;
+        const timer = setTimeout(() => {
+            ensurePlaceFieldVisible();
+        }, 50);
+        return () => clearTimeout(timer);
+    }, [ensurePlaceFieldVisible, keyboardHeight, placeFocused]);
 
     const handleSubmit = useCallback(async () => {
         if (!athleteId) return;
@@ -117,139 +185,176 @@ export default function PlanTrainingSessionScreen() {
         }
     }, [athleteId, createSession, date, durationMinutes, groupId, place, router, time]);
 
+    const bottomSpacing = Math.max(insets.bottom, 0);
+    const keyboardVerticalOffset = Math.max(insets.top, 16) + 48;
+    const scrollBottomPadding = bottomSpacing + (keyboardHeight > 0 ? keyboardHeight + 32 : 0);
+
     return (
         <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
-            <ScrollView
-                style={styles.scroll}
-                contentContainerStyle={[styles.container, { paddingTop: insets.top + 10, paddingBottom: insets.bottom + 20 }]}
+            <KeyboardAvoidingView
+                style={{ flex: 1 }}
+                behavior={Platform.OS === "ios" ? "padding" : "height"}
+                keyboardVerticalOffset={keyboardVerticalOffset}
             >
-                <View style={styles.header}>
-                    <Text style={styles.title}>Planifier une séance</Text>
-                    <Text style={styles.subtitle}>Date, horaire, durée et lieu.</Text>
-                </View>
-
-                <View style={styles.card}>
-                    <View style={{ gap: 6 }}>
-                        <Text style={styles.fieldLabel}>Date</Text>
-                        <Pressable
-                            accessibilityRole="button"
-                            onPress={() => setDatePickerVisible(true)}
-                            style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
-                        >
-                            <Text style={styles.pickerValue}>
-                                {date.toLocaleDateString("fr-FR", {
-                                    weekday: "long",
-                                    day: "2-digit",
-                                    month: "long",
-                                    year: "numeric",
-                                })}
-                            </Text>
-                            <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
-                        </Pressable>
+                <ScrollView
+                    ref={(node) => {
+                        scrollViewRef.current = node;
+                    }}
+                    style={styles.scroll}
+                    keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+                    keyboardShouldPersistTaps="handled"
+                    automaticallyAdjustKeyboardInsets
+                    scrollEventThrottle={16}
+                    onScroll={(event) => {
+                        scrollYRef.current = event.nativeEvent.contentOffset.y;
+                    }}
+                    contentContainerStyle={[
+                        styles.container,
+                        { paddingTop: insets.top + 10, paddingBottom: scrollBottomPadding + 20 },
+                    ]}
+                >
+                    <View style={styles.header}>
+                        <Text style={styles.title}>Planifier une séance</Text>
+                        <Text style={styles.subtitle}>Date, horaire, durée et lieu.</Text>
                     </View>
 
-                    {datePickerVisible ? (
-                        <DateTimePicker
-                            value={date}
-                            mode="date"
-                            display="default"
-                            onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
-                                setDatePickerVisible(false);
-                                if (event.type === "set" && selectedDate) {
-                                    setDate(selectedDate);
-                                }
-                            }}
-                        />
-                    ) : null}
-
-                    {durationPickerVisible ? (
-                        <DateTimePicker
-                            value={buildDurationDate(durationMinutes)}
-                            mode="time"
-                            display="default"
-                            is24Hour
-                            onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
-                                setDurationPickerVisible(false);
-                                if (event.type === "set" && selectedDate) {
-                                    setDurationMinutes(minutesFromDate(selectedDate));
-                                }
-                            }}
-                        />
-                    ) : null}
-
-                    {timePickerVisible ? (
-                        <DateTimePicker
-                            value={parseTimeToDate(time) ?? new Date()}
-                            mode="time"
-                            display="default"
-                            is24Hour
-                            onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
-                                setTimePickerVisible(false);
-                                if (event.type === "set" && selectedDate) {
-                                    setTime(formatTimeValue(selectedDate));
-                                }
-                            }}
-                        />
-                    ) : null}
-
-                    <View style={[styles.pickerRow, { marginTop: 14 }]}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.cardTitle}>Heure de début</Text>
+                    <View style={styles.card}>
+                        <View style={{ gap: 6 }}>
+                            <Text style={styles.fieldLabel}>Date</Text>
                             <Pressable
                                 accessibilityRole="button"
-                                onPress={() => setTimePickerVisible(true)}
-                                style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
-                            >
-                                <Text style={styles.pickerValue}>{normalizeTime(time) ?? "Choisir"}</Text>
-                                <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
-                            </Pressable>
-                        </View>
-
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.cardTitle}>Durée</Text>
-                            <Pressable
-                                accessibilityRole="button"
-                                onPress={() => setDurationPickerVisible(true)}
+                                onPress={() => setDatePickerVisible(true)}
                                 style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
                             >
                                 <Text style={styles.pickerValue}>
-                                    {formatDurationLabel(durationMinutes) ?? `${durationMinutes}min`}
+                                    {date.toLocaleDateString("fr-FR", {
+                                        weekday: "long",
+                                        day: "2-digit",
+                                        month: "long",
+                                        year: "numeric",
+                                    })}
                                 </Text>
                                 <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
                             </Pressable>
                         </View>
-                    </View>
 
-                    <Text style={[styles.cardTitle, { marginTop: 14 }]}>Lieu</Text>
-                    <TextInput
-                        mode="outlined"
-                        value={place}
-                        onChangeText={setPlace}
-                        placeholder="Stade, piste, salle…"
-                        autoCapitalize="sentences"
-                        autoCorrect={false}
-                        style={styles.input}
-                    />
+                        {datePickerVisible ? (
+                            <DateTimePicker
+                                value={date}
+                                mode="date"
+                                display="default"
+                                onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                                    setDatePickerVisible(false);
+                                    if (event.type === "set" && selectedDate) {
+                                        setDate(selectedDate);
+                                    }
+                                }}
+                            />
+                        ) : null}
 
-                    <Button
-                        mode="contained"
-                        onPress={handleSubmit}
-                        disabled={!canSubmit || submitting}
-                        loading={submitting}
-                        buttonColor="#22d3ee"
-                        textColor="#02111f"
-                        style={styles.submit}
-                    >
-                        Créer la séance
-                    </Button>
+                        {durationPickerVisible ? (
+                            <DateTimePicker
+                                value={buildDurationDate(durationMinutes)}
+                                mode="time"
+                                display="default"
+                                is24Hour
+                                onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                                    setDurationPickerVisible(false);
+                                    if (event.type === "set" && selectedDate) {
+                                        setDurationMinutes(minutesFromDate(selectedDate));
+                                    }
+                                }}
+                            />
+                        ) : null}
 
-                    {submitting ? (
-                        <View style={styles.submittingHint}>
-                            <ActivityIndicator size="small" color="#22d3ee" />
+                        {timePickerVisible ? (
+                            <DateTimePicker
+                                value={parseTimeToDate(time) ?? new Date()}
+                                mode="time"
+                                display="default"
+                                is24Hour
+                                onChange={(event: DateTimePickerEvent, selectedDate?: Date) => {
+                                    setTimePickerVisible(false);
+                                    if (event.type === "set" && selectedDate) {
+                                        setTime(formatTimeValue(selectedDate));
+                                    }
+                                }}
+                            />
+                        ) : null}
+
+                        <View style={[styles.pickerRow, { marginTop: 14 }]}>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.cardTitle}>Heure de début</Text>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    onPress={() => setTimePickerVisible(true)}
+                                    style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
+                                >
+                                    <Text style={styles.pickerValue}>{normalizeTime(time) ?? "Choisir"}</Text>
+                                    <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
+                                </Pressable>
+                            </View>
+
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.cardTitle}>Durée</Text>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    onPress={() => setDurationPickerVisible(true)}
+                                    style={({ pressed }) => [styles.pickerTrigger, pressed && styles.pickerTriggerPressed]}
+                                >
+                                    <Text style={styles.pickerValue}>
+                                        {formatDurationLabel(durationMinutes) ?? `${durationMinutes}min`}
+                                    </Text>
+                                    <MaterialCommunityIcons name="pencil-outline" size={16} color="#94a3b8" />
+                                </Pressable>
+                            </View>
                         </View>
-                    ) : null}
-                </View>
-            </ScrollView>
+
+                        <View
+                            ref={(node) => {
+                                placeFieldRef.current = node;
+                            }}
+                            collapsable={false}
+                        >
+                            <Text style={[styles.cardTitle, { marginTop: 14 }]}>Lieu</Text>
+                            <TextInput
+                                mode="outlined"
+                                value={place}
+                                onChangeText={setPlace}
+                                placeholder="Stade, piste, salle…"
+                                autoCapitalize="sentences"
+                                autoCorrect={false}
+                                onFocus={() => {
+                                    setPlaceFocused(true);
+                                    setTimeout(() => {
+                                        ensurePlaceFieldVisible();
+                                    }, 50);
+                                }}
+                                onBlur={() => setPlaceFocused(false)}
+                                style={styles.input}
+                            />
+                        </View>
+
+                        <Button
+                            mode="contained"
+                            onPress={handleSubmit}
+                            disabled={!canSubmit || submitting}
+                            loading={submitting}
+                            buttonColor="#22d3ee"
+                            textColor="#02111f"
+                            style={styles.submit}
+                        >
+                            Créer la séance
+                        </Button>
+
+                        {submitting ? (
+                            <View style={styles.submittingHint}>
+                                <ActivityIndicator size="small" color="#22d3ee" />
+                            </View>
+                        ) : null}
+                    </View>
+                </ScrollView>
+            </KeyboardAvoidingView>
         </SafeAreaView>
     );
 }

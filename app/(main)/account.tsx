@@ -11,13 +11,15 @@ type ProfilePath =
     | "/(main)/edit-profile/personal"
     | "/(main)/edit-profile/sport"
     | "/(main)/edit-profile/preferences"
-    | "/(main)/settings";
+    | "/(main)/settings"
+    | "/(main)/about";
 
 const PROFILE_PATHS: ReadonlySet<ProfilePath> = new Set<ProfilePath>([
     "/(main)/edit-profile/personal",
     "/(main)/edit-profile/sport",
     "/(main)/edit-profile/preferences",
     "/(main)/settings",
+    "/(main)/about",
 ]);
 
 type IoniconName = keyof typeof Ionicons.glyphMap;
@@ -169,6 +171,13 @@ export default function ProfileScreen() {
                 description: "Déconnexion ou suppression",
                 color: "#cbd5f5",
                 path: "/(main)/settings",
+            },
+            {
+                icon: "information-circle-outline",
+                label: "À propos",
+                description: "Découvrir Talent-X",
+                color: "#22d3ee",
+                path: "/(main)/about",
             },
         ];
 

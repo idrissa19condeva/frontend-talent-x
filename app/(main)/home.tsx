@@ -49,13 +49,14 @@ type NotificationItem = {
 };
 
 const isDynamicNotificationId = (id: string) =>
+    id === "talentx-about" ||
     id === "friend-requests" ||
     id.startsWith("group-requests-") ||
     id.startsWith("group-invite-") ||
     id.startsWith("server-");
 
 const isPersistedDismissalId = (id: string) =>
-    id === "friend-requests" || id.startsWith("group-requests-");
+    id === "talentx-about" || id === "friend-requests" || id.startsWith("group-requests-");
 
 const getNotificationSignature = (notification: Pick<NotificationItem, "id" | "message">) =>
     `${notification.id}|${notification.message}`;
@@ -104,6 +105,8 @@ export default function HomePage() {
     } = useTraining();
     const [searchQuery, setSearchQuery] = useState("");
     const [notificationsOpen, setNotificationsOpen] = useState(false);
+    const [talentXAboutPromptPending, setTalentXAboutPromptPending] = useState(false);
+    const [talentXAboutPromptLoaded, setTalentXAboutPromptLoaded] = useState(false);
     const [searchResults, setSearchResults] = useState<UserSearchResult[]>([]);
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
@@ -124,6 +127,37 @@ export default function HomePage() {
         name?: string;
     }[]>([]);
     const [serverInbox, setServerInbox] = useState<InboxNotification[]>([]);
+
+    const talentXAboutStorageKey = useMemo(() => {
+        if (!userId) return null;
+        return `talentx.aboutPrompt.v1:${userId}`;
+    }, [userId]);
+
+    const loadTalentXAboutPrompt = useCallback(async () => {
+        if (!talentXAboutStorageKey) {
+            setTalentXAboutPromptPending(false);
+            setTalentXAboutPromptLoaded(true);
+            return;
+        }
+        try {
+            const raw = await AsyncStorage.getItem(talentXAboutStorageKey);
+            setTalentXAboutPromptPending(raw === "1");
+        } catch {
+            setTalentXAboutPromptPending(false);
+        } finally {
+            setTalentXAboutPromptLoaded(true);
+        }
+    }, [talentXAboutStorageKey]);
+
+    const markTalentXAboutSeen = useCallback(async () => {
+        setTalentXAboutPromptPending(false);
+        if (!talentXAboutStorageKey) return;
+        try {
+            await AsyncStorage.setItem(talentXAboutStorageKey, "0");
+        } catch {
+            // best effort
+        }
+    }, [talentXAboutStorageKey]);
     const listRef = useRef<FlatList<NewsItem>>(null);
     const weeklyTargetNumber = useMemo(() => {
         const parsed = Number(user?.weeklySessions);
@@ -542,6 +576,15 @@ export default function HomePage() {
     const buildDefaultNotifications = useCallback(() => {
         const items: NotificationItem[] = [];
 
+        if (talentXAboutPromptLoaded && talentXAboutPromptPending) {
+            items.push({
+                id: "talentx-about",
+                tone: "info",
+                message: "Bienvenue sur Talent‑X ! Découvre l’application dans Compte → À propos.",
+                action: "navigate",
+            });
+        }
+
         serverInbox.forEach((notification) => {
             items.push({
                 id: `server-${notification.id}`,
@@ -584,7 +627,7 @@ export default function HomePage() {
             });
         });
         return items;
-    }, [groupInviteSummaries, groupRequestSummaries, pendingFriendRequests, serverInbox]);
+    }, [groupInviteSummaries, groupRequestSummaries, pendingFriendRequests, serverInbox, talentXAboutPromptLoaded, talentXAboutPromptPending]);
 
     const dismissedStorageKey = useMemo(() => {
         if (!userId) return null;
@@ -631,6 +674,11 @@ export default function HomePage() {
     }, [dismissedStorageKey]);
 
     useEffect(() => {
+        setTalentXAboutPromptLoaded(false);
+        void loadTalentXAboutPrompt();
+    }, [loadTalentXAboutPrompt, userId]);
+
+    useEffect(() => {
         if (!dismissedStorageKey) return;
         const persist = async () => {
             try {
@@ -668,8 +716,14 @@ export default function HomePage() {
     }, [searchQuery]);
 
     const toggleNotifications = useCallback(() => {
-        setNotificationsOpen((prev) => !prev);
-    }, []);
+        setNotificationsOpen((prev) => {
+            const next = !prev;
+            if (next && !talentXAboutPromptLoaded) {
+                void loadTalentXAboutPrompt();
+            }
+            return next;
+        });
+    }, [loadTalentXAboutPrompt, talentXAboutPromptLoaded]);
 
     const closeNotifications = useCallback(() => {
         setNotificationsOpen(false);
@@ -714,6 +768,10 @@ export default function HomePage() {
             setServerInbox((previous) => previous.filter((item) => item.id !== notification.serverNotificationId));
         }
 
+        if (notification.id === "talentx-about") {
+            void markTalentXAboutSeen();
+        }
+
         if (isPersistedDismissalId(notification.id)) {
             const signature = getNotificationSignature(notification);
             setDismissedNotificationSignatures((previous) => {
@@ -722,7 +780,7 @@ export default function HomePage() {
             });
         }
         setNotifications((previous) => previous.filter((item) => item.id !== notification.id));
-    }, []);
+    }, [markTalentXAboutSeen]);
 
     const handleClearNotifications = useCallback(() => {
         const hasServerNotifications = notifications.some((n) => Boolean(n.serverNotificationId));
@@ -738,11 +796,21 @@ export default function HomePage() {
             });
             return Array.from(next);
         });
+
+        if (notifications.some((n) => n.id === "talentx-about")) {
+            void markTalentXAboutSeen();
+        }
         setNotifications([]);
-    }, [notifications]);
+    }, [markTalentXAboutSeen, notifications]);
 
     const handleNotificationPress = useCallback(
         (notification: NotificationItem) => {
+            if (notification.id === "talentx-about" || notification.action === "navigate") {
+                closeNotifications();
+                router.push("/(main)/about" as never);
+                handleDismissNotification(notification);
+                return;
+            }
             if (notification.id === "friend-requests" || notification.action === "friendRequests") {
                 closeNotifications();
                 openFriendRequestsModal();
@@ -769,7 +837,7 @@ export default function HomePage() {
             closeNotifications();
             Alert.alert("Notification", notification.message);
         },
-        [closeNotifications, openFriendRequestsModal, router],
+        [closeNotifications, handleDismissNotification, openFriendRequestsModal, router],
     );
 
     const handleClearSearch = useCallback(() => {

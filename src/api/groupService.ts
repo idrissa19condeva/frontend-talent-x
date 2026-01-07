@@ -5,7 +5,7 @@ import {
     UpdateTrainingGroupPayload,
 } from "../types/trainingGroup";
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+import { API_URL } from "./config";
 const GROUPS_ENDPOINT = `${API_URL}/groups`;
 
 export const createTrainingGroup = async (payload: CreateTrainingGroupPayload): Promise<TrainingGroupSummary> => {

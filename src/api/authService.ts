@@ -1,7 +1,7 @@
 // src/api/authService.ts
 import axios from "axios";
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL;
+import { API_URL } from "./config";
 
 // ⚠️ Si tu testes sur un vrai téléphone : remplace 10.0.2.2 par ton IP locale (ex : 192.168.1.25)
 

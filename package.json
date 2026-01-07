@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
+    "start:render": "cross-env EXPO_PUBLIC_API_URL=https://backend-talent-x.onrender.com/api EXPO_PUBLIC_USE_PROFILE_MOCK=false expo start -c",
     "start:e2e:android": "cross-env EXPO_PUBLIC_API_URL=http://10.0.2.2:4001/api EXPO_PUBLIC_USE_PROFILE_MOCK=false expo start --dev-client",
     "start:e2e:phone": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-e2e-phone.ps1",
     "reset-project": "node ./scripts/reset-project.js",

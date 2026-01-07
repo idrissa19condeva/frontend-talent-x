@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect, useContext } from "react";
 import * as SecureStore from "expo-secure-store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { login as apiLogin, signup as apiSignup } from "../api/authService";
 import { getUserProfile } from "../api/userService";
 import { User } from "../types/User";
@@ -128,6 +129,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             mainDiscipline,
             licenseNumber,
         });
+
+        // First connection after signup: show a one-time About notification in Home.
+        try {
+            const createdUserId = (data.user as any)?.id || (data.user as any)?._id;
+            if (createdUserId) {
+                await AsyncStorage.setItem(`talentx.aboutPrompt.v1:${createdUserId}`, "1");
+            }
+        } catch {
+            // best effort
+        }
         await Promise.all([
             SecureStore.setItemAsync("token", data.token),
             data.refreshToken ? SecureStore.setItemAsync("refreshToken", data.refreshToken) : SecureStore.deleteItemAsync("refreshToken"),
