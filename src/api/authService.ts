@@ -28,6 +28,12 @@ export const checkEmailExists = async (email: string) => {
     return Boolean(response.data?.exists);
 };
 
+/** 🔹 Vérifie si un numéro de licence est déjà utilisé */
+export const checkLicenseExists = async (licenseNumber: string) => {
+    const response = await axios.get(`${API_URL}/auth/check-license`, { params: { licenseNumber } });
+    return Boolean(response.data?.exists);
+};
+
 /** 🔹 Demande un code email OTP */
 export const requestEmailCode = async (email: string) => {
     const response = await axios.post(`${API_URL}/auth/email-code`, { email });

@@ -288,7 +288,7 @@ export default function CreateTrainingSessionWizardScreen() {
         }
     }, [date, durationMinutes, initialGroupId, place, router, selectedTemplateId, time]);
 
-    const stepLabel = step === 1 ? "Planification" : step === 2 ? "Ajouter un template" : "Finalisation";
+    const stepLabel = step === 1 ? "Planification" : step === 2 ? "Ajouter un plan d'entraînement" : "Finalisation";
 
     const bottomSpacing = Math.max(insets.bottom, 0);
     const keyboardVerticalOffset = Platform.OS === "ios" ? 64 : 0;
@@ -482,9 +482,9 @@ export default function CreateTrainingSessionWizardScreen() {
                                     >
                                         <View style={styles.choiceHeader}>
                                             <MaterialCommunityIcons name="file-outline" size={18} color="#38bdf8" />
-                                            <Text style={styles.choiceTitle}>Séance vierge</Text>
+                                            <Text style={styles.choiceTitle}>Nouvelle série</Text>
                                         </View>
-                                        <Text style={styles.choiceSubtitle}>Créer un nouveau template</Text>
+                                        <Text style={styles.choiceSubtitle}>Créer un nouveau plan d'entraînement</Text>
                                     </Pressable>
 
                                     <Pressable
@@ -498,9 +498,9 @@ export default function CreateTrainingSessionWizardScreen() {
                                     >
                                         <View style={styles.choiceHeader}>
                                             <MaterialCommunityIcons name="bookmark-multiple-outline" size={18} color="#38bdf8" />
-                                            <Text style={styles.choiceTitle}>Template</Text>
+                                            <Text style={styles.choiceTitle}>Séries et blocs</Text>
                                         </View>
-                                        <Text style={styles.choiceSubtitle}>Snapshot figé</Text>
+                                        <Text style={styles.choiceSubtitle}>Vos plans d'entraînement</Text>
                                     </Pressable>
                                 </View>
 
@@ -740,7 +740,8 @@ const styles = StyleSheet.create({
     },
     choiceSubtitle: {
         color: "#94a3b8",
-        fontSize: 12,
+        fontSize: 10,
+        fontStyle: "italic",
     },
     loadingBox: {
         paddingVertical: 10,

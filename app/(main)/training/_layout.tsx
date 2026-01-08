@@ -67,8 +67,8 @@ export default function TrainingLayout() {
                                 const state = navigation.getState?.();
                                 const routes = state?.routes || [];
                                 const previousRoute = routes[routes.length - 2];
-                                if (previousRoute?.name === "create") {
-                                    navigation.reset?.({ index: 0, routes: [{ name: "index" }] });
+                                if (previousRoute?.name === "create" || previousRoute?.name === "create-training") {
+                                    router.replace("/(main)/training");
                                     return;
                                 }
                                 if (navigation.canGoBack()) {

@@ -1178,7 +1178,7 @@ export default function TrainingTemplateEditorScreen() {
                         <View style={styles.cardHeaderRow}>
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.cardTitle}>Séries & blocs</Text>
-                                <Text style={styles.cardSubtitle}>Construis ton template</Text>
+                                <Text style={styles.cardSubtitle}>Construis ton plan d'entraînement</Text>
                             </View>
                             <Button
                                 mode="outlined"
@@ -2909,6 +2909,7 @@ const styles = StyleSheet.create({
     cardSubtitle: {
         color: "#94a3b8",
         marginTop: 2,
+        fontSize: 11
     },
     input: {
         backgroundColor: "transparent",

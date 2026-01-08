@@ -8,6 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSignupWizard } from "../../src/context/SignupWizardContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { DISCIPLINE_GROUPS, getDisciplinesForPrimary, DisciplineGroup, DisciplineSubGroup } from "../../src/constants/disciplineGroups";
+import { checkLicenseExists } from "../../src/api/authService";
 
 export default function SignupStep3Screen() {
     const router = useRouter();
@@ -105,13 +106,31 @@ export default function SignupStep3Screen() {
             const apiMessage = resp?.data?.message;
             const status = resp?.status;
             const lower = typeof apiMessage === "string" ? apiMessage.toLowerCase() : "";
+            const fold = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+            const folded = fold(lower);
 
             if (lower.includes("email not verified")) {
                 setError("Confirme ton email avec le code reçu avant de continuer.");
                 router.replace("/(auth)/signup-email-confirm");
                 return;
             }
-            if (lower.includes("licence") || lower.includes("license")) {
+            // Duplicate license (API returns 409, but also catch message-only variants)
+            if (
+                status === 409
+                || folded.includes("deja utilise")
+                || folded.includes("already used")
+                || folded.includes("duplicate")
+            ) {
+                setLicenseError("Ce numéro de licence est déjà utilisé. Si c'est toi, connecte-toi. Sinon, vérifie le numéro.");
+                return;
+            }
+            // License mismatch with FFA profile (be specific, don't match the duplicate case above)
+            if (
+                folded.includes("introuvable")
+                || folded.includes("fiche ffa")
+                || folded.includes("ne correspond")
+                || folded.includes("mismatch")
+            ) {
                 setLicenseError(`Le numéro de licence ne correspond pas au prénom et nom ${draft.firstName} ${draft.lastName}`.trim());
                 return;
             }
@@ -122,6 +141,21 @@ export default function SignupStep3Screen() {
             setError("Impossible de finaliser l'inscription");
         } finally {
             setLoading(false);
+        }
+    };
+
+    const verifyLicenseUniqueness = async () => {
+        if (isCoach) return;
+        const trimmed = String(licenseNumber || "").trim();
+        if (!trimmed) return;
+
+        try {
+            const exists = await checkLicenseExists(trimmed);
+            if (exists) {
+                setLicenseError("Ce numéro de licence est déjà utilisé. Si c'est toi, connecte-toi. Sinon, vérifie le numéro.");
+            }
+        } catch (_err) {
+            // Best effort: do not block signup on pre-check failures.
         }
     };
 
@@ -220,7 +254,11 @@ export default function SignupStep3Screen() {
                                     <TextInput
                                         mode="outlined"
                                         value={licenseNumber}
-                                        onChangeText={setLicenseNumber}
+                                        onChangeText={(value) => {
+                                            setLicenseNumber(value);
+                                            if (licenseError) setLicenseError(null);
+                                        }}
+                                        onBlur={verifyLicenseUniqueness}
                                         placeholder="Ex: 1234567"
                                         autoCapitalize="none"
                                         keyboardType="number-pad"

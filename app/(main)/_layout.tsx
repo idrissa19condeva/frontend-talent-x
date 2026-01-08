@@ -82,6 +82,16 @@ export default function MainLayout() {
                         <Ionicons name="barbell-outline" size={size} color={color} />
                     ),
                 }}
+                listeners={({ navigation }) => ({
+                    tabPress: (e) => {
+                        // Si l'onglet est déjà actif, on remonte au hub des séances.
+                        // Si on vient d'un autre onglet, on laisse l'état précédent (comportement normal).
+                        if (navigation.isFocused()) {
+                            e.preventDefault();
+                            router.replace("/(main)/training");
+                        }
+                    },
+                })}
             />
             <Tabs.Screen
                 name="profile-stats"

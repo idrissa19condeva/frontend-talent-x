@@ -7,9 +7,14 @@ import { useTraining } from "../../context/TrainingContext";
 import { TrainingSession } from "../../types/training";
 
 const parseStart = (session: TrainingSession): number => {
-    const datePart = session.date || "";
-    const timePart = session.startTime || "00:00";
-    const iso = datePart.includes("T") ? datePart : `${datePart}T${timePart}`;
+    const rawDate = String(session.date || "").trim();
+    const timePart = String(session.startTime || "00:00").trim() || "00:00";
+    // `session.date` peut venir sous forme ISO (`YYYY-MM-DDT...Z`).
+    // On garde uniquement la partie date et on applique `startTime` pour avoir un start fiable.
+    const dateOnly = rawDate.includes("T") ? rawDate.split("T")[0] : rawDate;
+    if (!dateOnly) return 0;
+
+    const iso = `${dateOnly}T${timePart}`;
     const ts = new Date(iso).getTime();
     return Number.isNaN(ts) ? 0 : ts;
 };
@@ -26,7 +31,9 @@ const formatStart = (session?: TrainingSession): string => {
     const ts = parseStart(session);
     if (!ts) return "Aucune";
     const d = new Date(ts);
-    return d.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "short" });
+    const dateLabel = d.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "short" });
+    const timeLabel = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    return `${dateLabel} · ${timeLabel}`;
 };
 
 export default function CoachProfilePanel() {
@@ -105,7 +112,6 @@ export default function CoachProfilePanel() {
         <View style={styles.wrapper}>
             <View style={styles.card}>
                 <View style={styles.headerRow}>
-                    <Text style={styles.title}>Vue coach</Text>
                     <TouchableOpacity
                         style={styles.cta}
                         onPress={() => router.push("/(main)/training/create" as never)}
