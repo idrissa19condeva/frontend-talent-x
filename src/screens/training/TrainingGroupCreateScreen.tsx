@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Button, Dialog, Portal, Text, TextInput } from "react-native-paper";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -6,6 +6,7 @@ import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { createTrainingGroup } from "../../api/groupService";
+import { useAuth } from "../../context/AuthContext";
 
 export default function TrainingGroupCreateScreen() {
     const [name, setName] = useState("");
@@ -18,8 +19,20 @@ export default function TrainingGroupCreateScreen() {
     const [systemDialogTone, setSystemDialogTone] = useState<"info" | "error">("info");
     const [successDialogVisible, setSuccessDialogVisible] = useState(false);
     const router = useRouter();
+    const { user } = useAuth();
     const insets = useSafeAreaInsets();
     const canProceed = useMemo(() => Boolean(name.trim()), [name]);
+
+    useEffect(() => {
+        // Athletes can join/search groups but cannot create them.
+        if (!user?.role) return;
+        if (user.role === "coach") return;
+
+        router.replace({
+            pathname: "/(main)/training/groups",
+            params: { toast: "La création de groupe est réservée aux coachs." },
+        });
+    }, [router, user?.role]);
 
     const showSystemDialog = useCallback((title: string, message: string, tone: "info" | "error" = "info") => {
         setSystemDialogTitle(title);

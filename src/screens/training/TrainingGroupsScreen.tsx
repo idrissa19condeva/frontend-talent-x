@@ -33,6 +33,7 @@ export default function TrainingGroupsScreen() {
     const insets = useSafeAreaInsets();
 
     const userId = user?.id || user?._id;
+    const isCoach = user?.role === "coach";
 
     const toastParam = useMemo(() => {
         const value = params?.toast;
@@ -134,35 +135,55 @@ export default function TrainingGroupsScreen() {
                 refreshControl={<RefreshControl tintColor="#38bdf8" refreshing={refreshing} onRefresh={handleRefresh} />}
             >
                 <View style={styles.heroCard}>
-                    <View style={styles.heroStats}>
-                        <View style={styles.heroStatCard}>
-                            <Text style={styles.heroStatValue}>{totalGroups}</Text>
-                            <Text style={styles.heroStatLabel}>Groupes actifs</Text>
-                        </View>
-                        <View style={styles.heroStatCard}>
-                            <Text style={styles.heroStatValue}>{ownedGroups.length}</Text>
-                            <Text style={styles.heroStatLabel}>Créés par vous</Text>
-                        </View>
-                    </View>
+                    {isCoach ? (
+                        <>
+                            <View style={styles.heroStats}>
+                                <View style={styles.heroStatCard}>
+                                    <Text style={styles.heroStatValue}>{totalGroups}</Text>
+                                    <Text style={styles.heroStatLabel}>Groupes actifs</Text>
+                                </View>
+                                <View style={styles.heroStatCard}>
+                                    <Text style={styles.heroStatValue}>{ownedGroups.length}</Text>
+                                    <Text style={styles.heroStatLabel}>Créés par vous</Text>
+                                </View>
+                            </View>
 
-                    <View style={styles.heroActions}>
-                        <Pressable
-                            style={styles.primaryAction}
-                            onPress={() => router.push("/(main)/training/groups/create")}
-                            accessibilityRole="button"
-                        >
-                            <Text style={styles.primaryActionText}>Créer un groupe</Text>
-                            <MaterialCommunityIcons name="plus-circle" size={20} color="#0f172a" />
-                        </Pressable>
-                        <Pressable
-                            style={styles.secondaryAction}
-                            onPress={() => router.push("/(main)/training/groups/join")}
-                            accessibilityRole="button"
-                        >
-                            <MaterialCommunityIcons name="account-search" size={20} color="#f8fafc" />
-                            <Text style={styles.secondaryActionText}>Rejoindre</Text>
-                        </Pressable>
-                    </View>
+                            <View style={styles.heroActions}>
+                                <Pressable
+                                    style={styles.primaryAction}
+                                    onPress={() => router.push("/(main)/training/groups/create")}
+                                    accessibilityRole="button"
+                                >
+                                    <Text style={styles.primaryActionText}>Créer un groupe</Text>
+                                    <MaterialCommunityIcons name="plus-circle" size={20} color="#0f172a" />
+                                </Pressable>
+                                <Pressable
+                                    style={styles.secondaryAction}
+                                    onPress={() => router.push("/(main)/training/groups/join")}
+                                    accessibilityRole="button"
+                                >
+                                    <MaterialCommunityIcons name="account-search" size={20} color="#f8fafc" />
+                                    <Text style={styles.secondaryActionText}>Rejoindre</Text>
+                                </Pressable>
+                            </View>
+                        </>
+                    ) : (
+                        <View style={styles.athleteHeroRow}>
+                            <View style={[styles.heroStatCard, styles.athleteHeroStat]}>
+                                <Text style={styles.heroStatValue}>{totalGroups}</Text>
+                                <Text style={styles.heroStatLabel}>Groupes actifs</Text>
+                            </View>
+
+                            <Pressable
+                                style={[styles.secondaryAction, styles.athleteJoinAction]}
+                                onPress={() => router.push("/(main)/training/groups/join")}
+                                accessibilityRole="button"
+                            >
+                                <MaterialCommunityIcons name="account-search" size={20} color="#f8fafc" />
+                                <Text style={styles.secondaryActionText}>Rejoindre</Text>
+                            </Pressable>
+                        </View>
+                    )}
                 </View>
 
                 {error ? (
@@ -172,14 +193,19 @@ export default function TrainingGroupsScreen() {
                     </View>
                 ) : null}
 
+                {isCoach ? (
+                    <View style={styles.section}>
+                        <Text style={styles.sectionTitle}>Groupes créés</Text>
+                        <View style={styles.sectionContent}>
+                            {renderGroupList(ownedGroups, "owned", "Créez votre premier groupe.")}
+                        </View>
+                    </View>
+                ) : null}
+
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Groupes créés</Text>
+                    <Text style={styles.sectionTitle}>Groupes suivis</Text>
                     <View style={styles.sectionContent}>
-                        {renderGroupList(
-                            ownedGroups,
-                            "owned",
-                            "Créez votre premier groupe."
-                        )}
+                        {renderGroupList(memberGroups, "member", "Rejoignez un groupe pour collaborer avec d'autres athlètes.")}
                     </View>
                 </View>
 
@@ -187,13 +213,6 @@ export default function TrainingGroupsScreen() {
                     <Text style={styles.sectionTitle}>Invitations</Text>
                     <View style={styles.sectionContent}>
                         {renderGroupList(invitedGroups, "member", "Aucune invitation en attente.")}
-                    </View>
-                </View>
-
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Groupes suivis</Text>
-                    <View style={styles.sectionContent}>
-                        {renderGroupList(memberGroups, "member", "Rejoignez un groupe pour collaborer avec d'autres athlètes.")}
                     </View>
                 </View>
             </ScrollView>
@@ -437,6 +456,19 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         gap: 12,
         marginTop: 4,
+    },
+    athleteHeroRow: {
+        flexDirection: "row",
+        gap: 12,
+        alignItems: "stretch",
+        marginTop: 6,
+    },
+    athleteHeroStat: {
+        flex: 1,
+    },
+    athleteJoinAction: {
+        flex: 1,
+        justifyContent: "center",
     },
     primaryAction: {
         flex: 1,

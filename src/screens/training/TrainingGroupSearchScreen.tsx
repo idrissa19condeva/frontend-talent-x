@@ -39,8 +39,26 @@ export default function TrainingGroupSearchScreen() {
             const showLoader = options?.showLoader ?? true;
             try {
                 if (showLoader) setLoading(true);
-                const data = await searchTrainingGroups(trimmed, 5);
-                setResults(data);
+                const limit = trimmed.length === 0 ? 50 : 5;
+                const data = await searchTrainingGroups(trimmed, limit);
+
+                if (trimmed.length === 0) {
+                    const topByMembers = [...data]
+                        .sort((a, b) => {
+                            const diff = (b.membersCount || 0) - (a.membersCount || 0);
+                            if (diff !== 0) return diff;
+
+                            const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+                            const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+                            if (bCreated !== aCreated) return bCreated - aCreated;
+
+                            return (a.name || "").localeCompare(b.name || "", "fr", { sensitivity: "base" });
+                        })
+                        .slice(0, 5);
+                    setResults(topByMembers);
+                } else {
+                    setResults(data);
+                }
                 setSearched(true);
             } catch (error: any) {
                 const message = error?.response?.data?.message || error?.message || "Recherche impossible";
@@ -140,7 +158,7 @@ export default function TrainingGroupSearchScreen() {
                         onChangeText={setQuery}
                         mode="outlined"
                         style={styles.input}
-                        placeholder="Ex: Sprint Club Lyon"
+                        placeholder="Ex: Sprint Club Nancy"
                         returnKeyType="search"
                         onSubmitEditing={performSearch}
                         autoCapitalize="words"

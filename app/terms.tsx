@@ -31,12 +31,11 @@ export default function TermsScreen() {
                 style={{ flex: 1 }}
                 contentContainerStyle={{
                     paddingHorizontal: 10,
-                    paddingTop: 0,
                     paddingBottom: Math.max(insets.bottom + 24, 36),
                 }}
-                contentInsetAdjustmentBehavior="never"
                 stickyHeaderIndices={[0]}
             >
+                {/* HEADER */}
                 <View style={styles.stickyHeader}>
                     <View style={styles.headerCard}>
                         <TouchableOpacity
@@ -47,30 +46,167 @@ export default function TermsScreen() {
                         >
                             <Ionicons name="chevron-back" size={18} color="#e2e8f0" />
                         </TouchableOpacity>
+
                         <View style={styles.headerIconWrap}>
                             <Ionicons name="document-text-outline" size={22} color="#e2e8f0" />
                         </View>
+
                         <View style={{ flex: 1 }}>
                             <Text style={styles.headerTitle}>Mentions légales & CGU</Text>
-                            <Text style={styles.headerSubtitle}>Dernière mise à jour : {lastUpdated}</Text>
+                            <Text style={styles.headerSubtitle}>
+                                Dernière mise à jour : {lastUpdated}
+                            </Text>
                         </View>
                     </View>
                 </View>
 
+                {/* CONTENT */}
                 <View style={styles.card}>
                     <Section title="1. Mentions légales">
-                        {`Nom de l’application : Talent-X\n\nÉditeur :\nIdrissa CONDÉ\nStatut : Particulier – éditeur non professionnel\n\nAdresse :\nConformément à l’article 6-III-2 de la loi n°2004-575 du 21 juin 2004 pour la confiance dans l’économie numérique, l’adresse personnelle de l’éditeur a été communiquée à l’hébergeur et peut être transmise aux autorités judiciaires sur réquisition.\n\nEmail de contact :\ncontact@talent-x.app\n\nDirecteur de la publication :\nIdrissa CONDÉ\n\nHébergeur :\nOVHcloud\nOVH SAS\n2 rue Kellermann, 59100 Roubaix, France`}
+                        {`Nom de l’application : Talent-X
+
+Éditeur :
+Idrissa CONDE
+Statut : Particulier – éditeur non professionnel
+
+Adresse :
+Conformément à l’article 6-III-2 de la loi n°2004-575 du 21 juin 2004 pour la confiance dans l’économie numérique, l’adresse personnelle de l’éditeur a été communiquée à l’hébergeur et peut être transmise aux autorités judiciaires sur réquisition.
+
+Email de contact :
+contact@talent-x.app
+
+Directeur de la publication :
+Idrissa CONDE
+
+Hébergeur :
+OVHcloud
+OVH SAS
+2 rue Kellermann, 59100 Roubaix, France`}
                     </Section>
 
                     <Section title="2. Conditions Générales d’Utilisation (CGU)">
-                        {`1. Objet\nLes présentes Conditions Générales d’Utilisation (ci-après « CGU ») ont pour objet de définir les modalités d’accès et d’utilisation de l’application mobile Talent-X (ci-après « l’Application »).\n\nToute utilisation de l’Application implique l’acceptation pleine et entière des présentes CGU.\n\n2. Accès à l’Application\nL’Application est gratuite et accessible sur appareils Android et iOS, sous réserve de disposer d’un accès à internet.\n\nL’éditeur se réserve le droit de suspendre temporairement l’accès pour maintenance ou mise à jour, sans obligation d’indemnisation.\n\n3. Création de compte\nL’accès à certaines fonctionnalités nécessite la création d’un compte utilisateur.\n\nL’utilisateur s’engage à :\n• fournir des informations exactes,\n• maintenir la confidentialité de ses identifiants,\n• ne pas usurper l’identité d’un tiers.\n\nToute utilisation frauduleuse engage la responsabilité exclusive de l’utilisateur.\n\n4. Utilisation autorisée\nL’utilisateur s’engage à utiliser l’Application :\n• conformément aux lois françaises et européennes,\n• dans le respect des autres utilisateurs,\n• à des fins personnelles et non commerciales.\n\nSont strictement interdits :\n• toute tentative d’accès frauduleux,\n• toute extraction automatisée de données,\n• tout usage portant atteinte au bon fonctionnement de l’Application.\n\n5. Propriété intellectuelle\nL’ensemble des éléments de l’Application (code, design, logo, textes, bases de données) est protégé par le Code de la propriété intellectuelle.\n\nToute reproduction ou exploitation non autorisée est interdite.\n\n6. Responsabilité\nL’Application est fournie « en l’état ».\n\nL’éditeur ne saurait être tenu responsable :\n• d’une indisponibilité temporaire,\n• d’une perte de données imputable à l’utilisateur,\n• de dommages indirects liés à l’utilisation de l’Application.\n\nLes données sportives fournies par l’utilisateur ont une valeur informative et ne constituent en aucun cas un avis médical.\n\n7. Résiliation\nL’utilisateur peut supprimer son compte à tout moment.\n\nL’éditeur se réserve le droit de suspendre ou supprimer un compte en cas de non-respect des CGU.\n\n8. Droit applicable\nLes présentes CGU sont soumises au droit français.\n\nEn cas de litige, les tribunaux français sont seuls compétents.`}
+                        {`1. Objet
+Les présentes Conditions Générales d’Utilisation (ci-après « CGU ») ont pour objet de définir les modalités d’accès et d’utilisation de l’application mobile Talent-X (ci-après « l’Application »).
+
+Toute utilisation de l’Application implique l’acceptation pleine et entière des présentes CGU.
+
+2. Accès à l’Application
+L’Application est gratuite et accessible sur appareils Android et iOS, sous réserve de disposer d’un accès à internet.
+
+L’éditeur se réserve le droit de suspendre temporairement l’accès à l’Application pour maintenance, mise à jour ou amélioration.
+
+3. Création de compte
+L’accès à certaines fonctionnalités nécessite la création d’un compte utilisateur.
+
+L’utilisateur s’engage à :
+• fournir des informations exactes et à jour,
+• maintenir la confidentialité de ses identifiants,
+• ne pas usurper l’identité d’un tiers.
+
+Toute utilisation du compte est réputée effectuée par l’utilisateur titulaire.
+
+4. Utilisation autorisée
+L’utilisateur s’engage à utiliser l’Application :
+• conformément aux lois et règlements en vigueur,
+• dans un cadre strictement personnel et non commercial,
+• dans le respect des autres utilisateurs et de l’éditeur.
+
+Sont strictement interdits :
+• toute tentative d’accès frauduleux,
+• toute extraction automatisée ou massive de données,
+• toute atteinte au bon fonctionnement de l’Application.
+
+5. Données sportives et sources tierces
+L’Application permet à l’utilisateur de centraliser et visualiser ses données sportives.
+
+Ces données peuvent provenir :
+• de données saisies manuellement par l’utilisateur,
+• de données issues de sources publiques accessibles en ligne, à la demande expresse de l’utilisateur.
+
+Talent-X n’est pas propriétaire de ces bases de données tierces.
+Les droits afférents à ces contenus restent la propriété exclusive de leurs ayants droit.
+
+L’utilisateur reconnaît être à l’initiative de toute demande d’import de données externes et déclare disposer du droit de les utiliser.
+
+Talent-X agit exclusivement comme outil technique de centralisation et de visualisation.
+
+6. Propriété intellectuelle
+L’ensemble des éléments de l’Application est protégé par le Code de la propriété intellectuelle.
+Toute reproduction ou exploitation non autorisée est interdite.
+
+7. Responsabilité
+L’Application est fournie « en l’état ».
+
+L’éditeur ne saurait être tenu responsable :
+• d’une indisponibilité temporaire,
+• d’erreurs issues de sources tierces,
+• de pertes de données imputables à l’utilisateur ou à un tiers.
+
+Les données sportives n’ont aucune valeur médicale.
+
+8. Résiliation
+L’utilisateur peut supprimer son compte à tout moment.
+L’éditeur se réserve le droit de suspendre ou supprimer un compte en cas de violation des CGU.
+
+9. Droit applicable
+Les présentes CGU sont soumises au droit français.
+Les tribunaux français sont seuls compétents.`}
                     </Section>
 
                     <Section title="3. Politique de confidentialité (RGPD)">
-                        {`1. Responsable du traitement\nLe responsable du traitement des données est :\nIdrissa CONDÉ\nContact : contact@talent-x.app\n\n2. Données collectées\nL’Application peut collecter :\n• données d’identification (email, pseudo),\n• données sportives (performances, entraînements, statistiques),\n• données techniques (adresse IP, logs).\n\nLes données sportives sont considérées comme des données sensibles au sens du RGPD.\n\n3. Finalités\nLes données sont collectées pour :\n• le fonctionnement de l’Application,\n• la gestion des comptes utilisateurs,\n• l’affichage des statistiques sportives,\n• l’amélioration des services,\n• la sécurité et la prévention des abus.\n\n4. Base légale\nLe traitement repose sur :\n• l’exécution du service,\n• le consentement explicite de l’utilisateur,\n• l’intérêt légitime de l’éditeur pour la sécurité.\n\n5. Consentement explicite\nLors de l’inscription, l’utilisateur donne son consentement explicite à la collecte et au traitement de ses données personnelles et sportives.\n\nCe consentement peut être retiré à tout moment.\n\n6. Durée de conservation\nLes données sont conservées :\n• tant que le compte est actif,\n• puis supprimées dans un délai maximal de 30 jours après suppression du compte.\n\n7. Partage des données\nLes données ne sont :\n• ni vendues,\n• ni cédées,\n• ni transmises à des tiers,\n\nsauf obligation légale ou prestataire technique strictement nécessaire (hébergement).\n\n8. Sécurité\nDes mesures techniques et organisationnelles sont mises en œuvre :\n• accès restreint,\n• hébergement sécurisé,\n• protection contre les accès non autorisés.\n\n9. Droits des utilisateurs\nConformément au RGPD, l’utilisateur dispose des droits suivants :\n• accès,\n• rectification,\n• suppression,\n• limitation,\n• opposition,\n• portabilité.\n\nToute demande peut être adressée à :\ncontact@talent-x.app\n\n10. Réclamation\nL’utilisateur peut introduire une réclamation auprès de la CNIL :\nwww.cnil.fr`}
+                        {`1. Responsable du traitement
+Le responsable du traitement est :
+Idrissa CONDÉ
+Contact : contact@talent-x.app
+
+2. Données collectées
+• données d’identification (email, pseudo),
+• données sportives (performances, entraînements),
+• données techniques (adresse IP, logs).
+
+3. Origine des données
+Les données sont fournies par l’utilisateur ou issues de sources publiques accessibles en ligne à sa demande expresse.
+
+Talent-X ne revendique aucun droit de propriété sur ces données tierces.
+
+4. Finalités
+• fonctionnement de l’Application,
+• gestion des comptes,
+• visualisation des performances,
+• amélioration du service,
+• sécurité.
+
+5. Base légale
+• exécution du service,
+• consentement explicite,
+• intérêt légitime pour la sécurité.
+
+6. Consentement
+Le consentement est donné lors de l’inscription et peut être retiré à tout moment.
+
+7. Durée de conservation
+• tant que le compte est actif,
+• suppression sous 30 jours après clôture.
+
+8. Partage
+Aucune vente ni cession des données.
+Partage uniquement si obligation légale ou hébergement.
+
+9. Sécurité
+Mesures techniques et organisationnelles adaptées mises en œuvre.
+
+10. Droits
+Accès, rectification, suppression, opposition, portabilité.
+
+Contact :
+contact@talent-x.app
+
+11. Réclamation
+L’utilisateur peut saisir la CNIL :
+www.cnil.fr`}
                     </Section>
 
-                    <Section title="4. Texte d’acceptation (inscription)">
+                    <Section title="4. Texte d’acceptation">
                         {`J’accepte les Conditions Générales d’Utilisation et la Politique de Confidentialité et je consens explicitement au traitement de mes données personnelles et sportives conformément au RGPD.`}
                     </Section>
                 </View>
@@ -144,13 +280,7 @@ const styles = StyleSheet.create({
         backgroundColor: "rgba(15,23,42,0.75)",
         borderWidth: 1,
         borderColor: "rgba(148,163,184,0.2)",
-        gap: 12,
-    },
-    notice: {
-        color: "#cbd5e1",
-        fontSize: 12,
-        lineHeight: 18,
-        opacity: 0.9,
+        gap: 14,
     },
     section: {
         gap: 6,
@@ -159,7 +289,6 @@ const styles = StyleSheet.create({
         color: "#e2e8f0",
         fontWeight: "800",
         fontSize: 13,
-        letterSpacing: 0.2,
     },
     sectionText: {
         color: "#cbd5e1",
