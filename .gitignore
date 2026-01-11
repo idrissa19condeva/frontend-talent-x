@@ -42,3 +42,6 @@ app-example
 # generated native folders
 /ios
 /android
+
+# services files
+talent-x-483907-b714000980a3.json

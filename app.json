@@ -1,20 +1,24 @@
 {
   "expo": {
     "name": "Talent-X",
-    "slug": "Talent-x",
+    "slug": "talent-x",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon1.png",
+    "icon": "./assets/images/favicon1.png",
     "scheme": "talent-x",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.talentx.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/icon-foreground1.png",
+        "foregroundImage": "./assets/images/favicon1.png",
         "backgroundImage": "./assets/images/icon-background.png",
         "monochromeImage": "./assets/images/icon-mono.png"
       },
@@ -22,7 +26,7 @@
       "softwareKeyboardLayoutMode": "resize",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.kirikoutrackandfield.tracknfieldmobile"
+      "package": "com.talentx.app"
     },
     "web": {
       "output": "static",
@@ -34,12 +38,11 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash.png",
+          "image": "./assets/images/favicon1.png",
+          "width": 800,
+          "height": 800,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
-          "dark": {
-            "backgroundColor": "#000000"
-          }
+          "backgroundColor": "#000000"
         }
       ],
       "expo-secure-store",
@@ -52,8 +55,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "93114cda-1e8d-4561-9a7c-97491a8fde18"
+        "projectId": "ac859192-b5db-4d46-9e25-959958791804"
       }
-    }
+    },
+    "owner": "talent-x"
   }
 }
