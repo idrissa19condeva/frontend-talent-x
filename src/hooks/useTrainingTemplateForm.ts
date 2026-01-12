@@ -29,15 +29,21 @@ const clampTargetIntensity = (value: number) => Math.max(1, Math.min(10, value))
 const isSegmentValid = (segment: TrainingSeriesSegment, segments: TrainingSeriesSegment[]) => {
     const blockType = segment.blockType || "vitesse";
 
-    const metricEnabled = Boolean(segment.customMetricEnabled);
-    const metricKind = segment.customMetricKind;
-    const requiresDistance = blockType !== "custom" || (metricEnabled && metricKind === "distance");
-
-    const hasDistance = requiresDistance ? (segment.distance ?? 0) > 0 : true;
-    const hasRest = (segment.restInterval ?? 0) > 0;
+    // Keep frontend validation aligned with backend schema:
+    // - distance is required for all blocks, but can be 0 for "custom" and "muscu".
+    // - other block types require a positive distance (>= 1).
+    const distanceValue = typeof segment.distance === "number" && !Number.isNaN(segment.distance) ? segment.distance : 0;
+    const hasDistance = blockType === "custom" || blockType === "muscu" ? distanceValue >= 0 : distanceValue >= 1;
+    const hasRest =
+        typeof segment.restInterval === "number" &&
+        !Number.isNaN(segment.restInterval) &&
+        segment.restInterval >= 0;
 
     const requireReps = segments.length === 1;
     const repsValid = requireReps ? (segment.repetitions ?? 0) > 0 : true;
+
+    const metricEnabled = Boolean(segment.customMetricEnabled);
+    const metricKind = segment.customMetricKind;
 
     const exerciseCount = Array.isArray(segment.customExercises)
         ? segment.customExercises.filter((exercise) => Boolean(exercise && exercise.trim())).length
@@ -92,7 +98,10 @@ export const useTrainingTemplateForm = (defaults?: Partial<TrainingTemplateFormV
 
     const canSubmit = useMemo(() => {
         const hasBasics = Boolean(values.type && (values.title ?? "").trim());
-        const hasSeriesRest = (values.seriesRestInterval ?? 0) > 0;
+        const hasSeriesRest =
+            typeof values.seriesRestInterval === "number" &&
+            !Number.isNaN(values.seriesRestInterval) &&
+            (values.seriesRestInterval ?? 0) >= 0;
         const hasSeries = Array.isArray(values.series) && values.series.length > 0;
         const seriesValid = hasSeries
             ? values.series.every((serie: TrainingSeries) => {

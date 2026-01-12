@@ -14,17 +14,19 @@ import {
     View,
 } from "react-native";
 import { Button, Text, TextInput } from "react-native-paper";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, useSegments } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 
+import { useTraining } from "../../context/TrainingContext";
 import { useTrainingTemplatesList } from "../../hooks/useTrainingTemplatesList";
 import { createSessionFromTemplate, getTrainingTemplate } from "../../api/trainingTemplateService";
 import { consumeNavigationResult } from "../../utils/navigationResults";
 import { TrainingTemplate } from "../../types/trainingTemplate";
 import { formatDurationLabel } from "../../utils/trainingFormatter";
+import { TrainingSession } from "../../types/training";
 
 type WizardStep = 1 | 2 | 3;
 
@@ -72,10 +74,19 @@ const formatTemplateSubtitle = (template: TrainingTemplate) => {
 export default function CreateTrainingSessionWizardScreen() {
     const router = useRouter();
     const params = useLocalSearchParams<{ templateId?: string; id?: string; groupId?: string }>();
+    const segments = useSegments();
     const insets = useSafeAreaInsets();
     const isFocused = useIsFocused();
-    const initialTemplateId = (params?.templateId || params?.id || "").toString();
+    const isEditMode = useMemo(() => segments.join("/").includes("edit"), [segments]);
+    const routeId = (params?.id || "").toString();
+    const initialTemplateId = (params?.templateId || (!isEditMode ? routeId : "") || "").toString();
     const initialGroupId = (params?.groupId || "").toString();
+    const editingSessionId = isEditMode ? routeId : "";
+
+    const { fetchSession, updateSession } = useTraining();
+    const [editingSession, setEditingSession] = useState<TrainingSession | null>(null);
+    const [prefillLoading, setPrefillLoading] = useState(false);
+    const [prefillError, setPrefillError] = useState<string | null>(null);
 
     const [step, setStep] = useState<WizardStep>(1);
     const [templatePickerEnabled, setTemplatePickerEnabled] = useState<boolean>(Boolean(initialTemplateId));
@@ -103,6 +114,39 @@ export default function CreateTrainingSessionWizardScreen() {
     const [timePickerVisible, setTimePickerVisible] = useState(false);
 
     const { templates, loading: templatesLoading, error: templatesError, refresh: refreshTemplates } = useTrainingTemplatesList();
+
+    const loadSessionForEdit = useCallback(async () => {
+        if (!isEditMode || !editingSessionId) return;
+        setPrefillError(null);
+        setPrefillLoading(true);
+        try {
+            const session = await fetchSession(editingSessionId);
+            setEditingSession(session);
+            setDate(new Date(session.date));
+            setTime(session.startTime || "09:00");
+            setDurationMinutes(session.durationMinutes || 60);
+            setPlace(session.place || "");
+
+            if (session.templateId) {
+                setSelectedTemplateId(session.templateId);
+                setSelectedTemplateTitle(session.templateSnapshot?.title || "");
+            }
+        } catch (e: any) {
+            setPrefillError(e?.message || "Impossible de charger la séance");
+        } finally {
+            setPrefillLoading(false);
+        }
+    }, [editingSessionId, fetchSession, isEditMode]);
+
+    useEffect(() => {
+        if (!isEditMode) {
+            setEditingSession(null);
+            setPrefillError(null);
+            setPrefillLoading(false);
+            return;
+        }
+        loadSessionForEdit();
+    }, [isEditMode, loadSessionForEdit]);
 
     useEffect(() => {
         const showEvent = Platform.OS === "android" ? "keyboardDidShow" : "keyboardWillShow";
@@ -225,6 +269,55 @@ export default function CreateTrainingSessionWizardScreen() {
         }
     }, [selectedTemplateId, selectedTemplateTitle]);
 
+    const handleUpdate = useCallback(async () => {
+        if (!isEditMode || !editingSessionId || !editingSession) return;
+        const normalizedTime = normalizeTime(time);
+        const normalizedDuration = clampDurationMinutes(durationMinutes);
+        const normalizedPlace = place.trim();
+        if (!normalizedTime || !normalizedDuration || !normalizedPlace) {
+            Alert.alert("Champs invalides", "Vérifie l'heure, la durée, et le lieu.");
+            return;
+        }
+        if (!selectedTemplateId) {
+            Alert.alert("Template requis", "Choisis un template.");
+            setStep(2);
+            return;
+        }
+
+        try {
+            setSubmitting(true);
+            const template = await getTrainingTemplate(selectedTemplateId);
+
+            await updateSession(editingSessionId, {
+                athleteId: editingSession.athleteId,
+                date,
+                startTime: normalizedTime,
+                durationMinutes: normalizedDuration,
+                type: template.type,
+                title: template.title,
+                place: normalizedPlace,
+                description: template.description || "",
+                series: template.series || [],
+                seriesRestInterval: template.seriesRestInterval,
+                seriesRestUnit: template.seriesRestUnit,
+                targetIntensity: template.targetIntensity,
+                coachNotes: editingSession.coachNotes,
+                athleteFeedback: editingSession.athleteFeedback,
+                equipment: template.equipment,
+                templateId: template.id,
+                templateSnapshot: template,
+                status: editingSession.status,
+                groupId: editingSession.group?.id || editingSession.groupId || undefined,
+            } as any);
+
+            router.replace(`/(main)/training/${editingSessionId}`);
+        } catch (err: any) {
+            Alert.alert("Erreur", err?.response?.data?.message || err?.message || "Impossible de mettre à jour la séance");
+        } finally {
+            setSubmitting(false);
+        }
+    }, [date, durationMinutes, editingSession, editingSessionId, isEditMode, place, router, selectedTemplateId, setStep, time, updateSession]);
+
     const goNext = useCallback(async () => {
         if (step === 1) {
             if (!canGoNextFromStep1) {
@@ -288,6 +381,37 @@ export default function CreateTrainingSessionWizardScreen() {
         }
     }, [date, durationMinutes, initialGroupId, place, router, selectedTemplateId, time]);
 
+    if (isEditMode && prefillLoading) {
+        return (
+            <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
+                <View style={styles.stateContainer}>
+                    <ActivityIndicator color="#22d3ee" />
+                    <Text style={styles.stateSubtitle}>Chargement de la séance...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
+    if (isEditMode && prefillError) {
+        return (
+            <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
+                <View style={styles.stateContainer}>
+                    <Text style={styles.stateTitle}>Impossible de charger</Text>
+                    <Text style={styles.stateSubtitle}>{prefillError}</Text>
+                    <Button
+                        mode="contained"
+                        onPress={loadSessionForEdit}
+                        buttonColor="#22d3ee"
+                        textColor="#02111f"
+                        style={{ marginTop: 12 }}
+                    >
+                        Réessayer
+                    </Button>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
     const stepLabel = step === 1 ? "Planification" : step === 2 ? "Ajouter un plan d'entraînement" : "Finalisation";
 
     const bottomSpacing = Math.max(insets.bottom, 0);
@@ -324,7 +448,7 @@ export default function CreateTrainingSessionWizardScreen() {
                     }
                 >
                     <View style={styles.header}>
-                        <Text style={styles.title}>Créer une séance</Text>
+                        <Text style={styles.title}>{isEditMode ? "Modifier une séance" : "Créer une séance"}</Text>
                         <Text style={styles.subtitle}>{stepLabel}</Text>
                     </View>
 
@@ -484,7 +608,7 @@ export default function CreateTrainingSessionWizardScreen() {
                                             <MaterialCommunityIcons name="file-outline" size={18} color="#38bdf8" />
                                             <Text style={styles.choiceTitle}>Nouvelle série</Text>
                                         </View>
-                                        <Text style={styles.choiceSubtitle}>Créer un nouveau plan d'entraînement</Text>
+                                        <Text style={styles.choiceSubtitle}>Créer un nouveau plan d&apos;entraînement</Text>
                                     </Pressable>
 
                                     <Pressable
@@ -500,7 +624,7 @@ export default function CreateTrainingSessionWizardScreen() {
                                             <MaterialCommunityIcons name="bookmark-multiple-outline" size={18} color="#38bdf8" />
                                             <Text style={styles.choiceTitle}>Séries et blocs</Text>
                                         </View>
-                                        <Text style={styles.choiceSubtitle}>Vos plans d'entraînement</Text>
+                                        <Text style={styles.choiceSubtitle}>Vos plans d&apos;entraînement</Text>
                                     </Pressable>
                                 </View>
 
@@ -610,6 +734,17 @@ export default function CreateTrainingSessionWizardScreen() {
                                     disabled={submitting || (step === 1 ? !canGoNextFromStep1 : !canGoNextFromStep2)}
                                 >
                                     Suivant
+                                </Button>
+                            ) : isEditMode ? (
+                                <Button
+                                    mode="contained"
+                                    onPress={handleUpdate}
+                                    buttonColor="#22d3ee"
+                                    textColor="#02111f"
+                                    loading={submitting}
+                                    disabled={!canSubmit || submitting}
+                                >
+                                    Mettre à jour
                                 </Button>
                             ) : (
                                 <Button

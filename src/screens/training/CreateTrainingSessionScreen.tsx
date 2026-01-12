@@ -40,7 +40,6 @@ import {
 import { TrainingTypeSelect } from "../../components/training/TrainingTypeSelect";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker, { DateTimePickerAndroid, DateTimePickerEvent } from "@react-native-community/datetimepicker";
-import { LinearGradient } from "expo-linear-gradient";
 import {
     CreateTrainingSessionPayload,
     CustomBlockMetricKind,
@@ -437,6 +436,7 @@ export default function CreateTrainingSessionScreen() {
     });
     const [keyboardHeight, setKeyboardHeight] = useState(0);
     const [ppgExerciseDrafts, setPpgExerciseDrafts] = useState<Record<string, string>>({});
+    const [muscuExerciseDrafts, setMuscuExerciseDrafts] = useState<Record<string, string>>({});
     const [customExerciseDrafts, setCustomExerciseDrafts] = useState<Record<string, string>>({});
     const sessionDateDisplay = useMemo(() => formatSessionDateDisplay(values.date), [values.date]);
     const sessionTimeDisplay = useMemo(() => formatSessionTimeDisplay(values.startTime), [values.startTime]);
@@ -752,6 +752,8 @@ export default function CreateTrainingSessionScreen() {
             ppgExercises: [],
             ppgDurationSeconds: undefined,
             ppgRestSeconds: undefined,
+            muscuExercises: [],
+            muscuRepetitions: undefined,
             recoveryMode: undefined,
             recoveryDurationSeconds: undefined,
             startCount: undefined,
@@ -771,13 +773,25 @@ export default function CreateTrainingSessionScreen() {
                 cleared.cotesMode = "distance";
                 break;
             case "ppg":
+                cleared.distance = 0;
+                cleared.repetitions = 1;
                 cleared.ppgExercises = [];
                 break;
+            case "muscu":
+                cleared.distance = 0;
+                cleared.repetitions = 1;
+                cleared.muscuExercises = [];
+                cleared.muscuRepetitions = segment.muscuRepetitions ?? 10;
+                break;
             case "recup":
+                cleared.distance = 0;
+                cleared.repetitions = 1;
                 cleared.recoveryMode = "marche";
                 cleared.recoveryDurationSeconds = cleared.recoveryDurationSeconds ?? 60;
                 break;
             case "start":
+                cleared.distance = 0;
+                cleared.repetitions = 1;
                 cleared.startCount = cleared.startCount ?? 3;
                 cleared.startExitDistance = cleared.startExitDistance ?? 10;
                 break;
@@ -907,6 +921,38 @@ export default function CreateTrainingSessionScreen() {
         }
         const nextExercises = currentExercises.filter((_, idx) => idx !== index);
         handleSegmentFieldChange(serieId, segment.id, "ppgExercises", nextExercises);
+    };
+
+    const handleMuscuExerciseDraftChange = (segmentId: string, value: string) => {
+        setMuscuExerciseDrafts((prev) => ({ ...prev, [segmentId]: value }));
+    };
+
+    const resetMuscuExerciseDraft = (segmentId: string) => {
+        setMuscuExerciseDrafts((prev) => {
+            if (!(segmentId in prev)) return prev;
+            const next = { ...prev };
+            delete next[segmentId];
+            return next;
+        });
+    };
+
+    const handleAddMuscuExercise = (serieId: string, segment: TrainingSeriesSegment) => {
+        const draft = (muscuExerciseDrafts[segment.id] || "").trim();
+        if (!draft) {
+            return;
+        }
+        const currentExercises = (segment as any).muscuExercises || [];
+        handleSegmentFieldChange(serieId, segment.id, "muscuExercises" as any, [...currentExercises, draft] as any);
+        resetMuscuExerciseDraft(segment.id);
+    };
+
+    const handleRemoveMuscuExercise = (serieId: string, segment: TrainingSeriesSegment, index: number) => {
+        const currentExercises = (segment as any).muscuExercises || [];
+        if (index < 0 || index >= currentExercises.length) {
+            return;
+        }
+        const nextExercises = currentExercises.filter((_: any, idx: number) => idx !== index);
+        handleSegmentFieldChange(serieId, segment.id, "muscuExercises" as any, nextExercises as any);
     };
 
     const handleCustomExerciseDraftChange = (segmentId: string, value: string) => {
@@ -1217,6 +1263,8 @@ export default function CreateTrainingSessionScreen() {
                     return "Alterner distance ou durée selon la séance.";
                 case "ppg":
                     return "Liste les exercices de préparation physique.";
+                case "muscu":
+                    return "Ajoute tes exercices et tes répétitions par exo.";
                 case "recup":
                     return "Configure le type et la durée de récupération.";
                 case "start":
@@ -1422,6 +1470,66 @@ export default function CreateTrainingSessionScreen() {
                         {renderTimeInput("Durée exo (mm:ss)", "ppgDurationSeconds", segment.ppgDurationSeconds)}
                         {renderTimeInput("Récup (mm:ss)", "ppgRestSeconds", segment.ppgRestSeconds)}
                         {renderRepetitionInput("Tours", "repetitions")}
+                    </View>
+                </View>
+            );
+        };
+
+        const renderMuscuContent = () => {
+            const exercises = Array.isArray((segment as any).muscuExercises) ? ((segment as any).muscuExercises as string[]) : [];
+            const draftValue = muscuExerciseDrafts[segment.id] ?? "";
+            const canAddExercise = Boolean(draftValue.trim());
+            return (
+                <View style={styles.segmentStack}>
+                    <Text style={styles.segmentFieldLabel}>Exercices</Text>
+                    <View style={styles.ppgInputRow}>
+                        <TextInput
+                            mode="outlined"
+                            style={[styles.input, styles.ppgExerciseInput]}
+                            textColor="#f8fafc"
+                            value={draftValue}
+                            onChangeText={(text) => handleMuscuExerciseDraftChange(segment.id, text)}
+                            placeholder="Ex: Développé couché"
+                            placeholderTextColor="#64748b"
+                            returnKeyType="done"
+                            onSubmitEditing={() => handleAddMuscuExercise(serie.id, segment)}
+                        />
+                        <Button
+                            mode="contained"
+                            icon="plus"
+                            compact
+                            onPress={() => handleAddMuscuExercise(serie.id, segment)}
+                            disabled={!canAddExercise}
+                            style={styles.ppgAddButton}
+                            contentStyle={styles.ppgAddButtonContent}
+                            buttonColor="#22d3ee"
+                            textColor="#02111f"
+                            accessibilityLabel="Ajouter un exercice muscu"
+                        >
+                            {null}
+                        </Button>
+                    </View>
+                    <View style={styles.ppgExerciseList}>
+                        {exercises.length ? (
+                            exercises.map((exercise, idx) => (
+                                <View key={`${segment.id}-muscu-exercise-${idx}`} style={styles.ppgExerciseChip}>
+                                    <Text style={styles.ppgExerciseChipText}>{exercise}</Text>
+                                    <Pressable
+                                        style={styles.ppgExerciseChipRemove}
+                                        onPress={() => handleRemoveMuscuExercise(serie.id, segment, idx)}
+                                        accessibilityLabel={`Retirer ${exercise}`}
+                                    >
+                                        <MaterialCommunityIcons name="close" size={16} color="#f8fafc" />
+                                    </Pressable>
+                                </View>
+                            ))
+                        ) : (
+                            <Text style={styles.ppgExerciseEmptyText}>Ajoute ton premier exercice.</Text>
+                        )}
+                    </View>
+                    <View style={styles.segmentFieldsRow}>
+                        {renderRepetitionInput("Rép/exo", "muscuRepetitions", (segment as any).muscuRepetitions)}
+                        {renderTimeInput("Repos (mm:ss)", "restInterval", segment.restInterval)}
                     </View>
                 </View>
             );
@@ -1707,6 +1815,8 @@ export default function CreateTrainingSessionScreen() {
                     return renderCotesContent();
                 case "ppg":
                     return renderPpgContent();
+                case "muscu":
+                    return renderMuscuContent();
                 case "recup":
                     return renderRecupContent();
                 case "start":
@@ -1875,18 +1985,6 @@ export default function CreateTrainingSessionScreen() {
 
     return (
         <>
-            <View style={styles.backgroundLayer} pointerEvents="none">
-                <LinearGradient
-                    colors={["#040918", "#031227", "#021827"]}
-                    locations={[0, 0.5, 1]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={StyleSheet.absoluteFillObject}
-                />
-                <View style={[styles.glow, styles.glowTopLeft]} />
-                <View style={[styles.glow, styles.glowCenter]} />
-                <View style={[styles.glow, styles.glowBottomRight]} />
-            </View>
             <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
                 <KeyboardAvoidingView
                     behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -1897,10 +1995,7 @@ export default function CreateTrainingSessionScreen() {
                         keyboardShouldPersistTaps="handled"
                         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
                         automaticallyAdjustKeyboardInsets
-                        contentContainerStyle={[
-                            styles.container,
-                            { paddingBottom: scrollBottomPadding },
-                        ]}
+                        contentContainerStyle={[styles.container, { paddingBottom: scrollBottomPadding }]}
                         contentInsetAdjustmentBehavior="never"
                     >
                         <View style={styles.panel}>
@@ -2696,15 +2791,7 @@ export default function CreateTrainingSessionScreen() {
                 visible={blockPickerState.visible}
                 onRequestClose={closeBlockPicker}
             >
-                <View
-                    style={[
-                        styles.blockPickerBackdrop,
-                        keyboardHeight > 0 && {
-                            justifyContent: "flex-end",
-                            paddingBottom: Math.max(24, keyboardHeight - bottomSpacing + 16),
-                        },
-                    ]}
-                >
+                <View style={styles.blockPickerBackdrop}>
                     <Pressable style={StyleSheet.absoluteFillObject} onPress={closeBlockPicker} />
                     <View style={styles.blockPickerModal}>
                         <Text style={styles.blockPickerTitle}>Type de bloc</Text>
@@ -2718,10 +2805,7 @@ export default function CreateTrainingSessionScreen() {
                                     <Pressable
                                         key={`block-${option.type}`}
                                         onPress={() => handleBlockTypeSelect(option.type)}
-                                        style={[
-                                            styles.blockPickerOptionRow,
-                                            isSelected && styles.blockPickerOptionActive,
-                                        ]}
+                                        style={[styles.blockPickerOptionRow, isSelected && styles.blockPickerOptionActive]}
                                     >
                                         <Text style={styles.blockPickerOptionText}>{option.label}</Text>
                                         {isSelected ? (
@@ -2773,18 +2857,10 @@ export default function CreateTrainingSessionScreen() {
                         <View style={styles.modalContent}>
                             <View style={styles.modalGrabber} />
                             <Text style={styles.pickerTitle}>Choisis la date de séance</Text>
-                            <Text style={styles.pickerDescription}>
-                                Utilise la même précision que dans la section Informations personnelles.
-                            </Text>
                             <View style={styles.pickerPreview}>
                                 <Text style={styles.pickerPreviewLabel}>Date sélectionnée</Text>
                                 <Text style={styles.pickerPreviewValue}>
-                                    {tempSessionDate.toLocaleDateString("fr-FR", {
-                                        weekday: "long",
-                                        day: "2-digit",
-                                        month: "long",
-                                        year: "numeric",
-                                    })}
+                                    {formatSessionDateDisplay(formatSessionDatePayload(tempSessionDate))}
                                 </Text>
                             </View>
                             <DateTimePicker
@@ -2925,39 +3001,7 @@ export default function CreateTrainingSessionScreen() {
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
-        backgroundColor: "transparent",
-    },
-    backgroundLayer: {
-        ...StyleSheet.absoluteFillObject,
         backgroundColor: "#030816",
-    },
-    glow: {
-        position: "absolute",
-        width: 360,
-        height: 360,
-        borderRadius: 260,
-        opacity: 0.38,
-        backgroundColor: "rgba(34,211,238,0.25)",
-    },
-    glowTopLeft: {
-        top: -80,
-        left: -60,
-    },
-    glowCenter: {
-        top: "38%",
-        left: "35%",
-        width: 520,
-        height: 520,
-        opacity: 0.22,
-        backgroundColor: "rgba(129,140,248,0.25)",
-    },
-    glowBottomRight: {
-        bottom: -120,
-        right: -80,
-        width: 420,
-        height: 420,
-        opacity: 0.28,
-        backgroundColor: "rgba(14,165,233,0.25)",
     },
     keyboardAvoider: {
         flex: 1,

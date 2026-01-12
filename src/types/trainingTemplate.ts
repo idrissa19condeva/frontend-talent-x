@@ -5,6 +5,8 @@ export type TrainingTemplateVisibility = "private";
 export interface TrainingTemplate {
     id: string;
     ownerId: string;
+    isDefault?: boolean;
+    defaultKey?: string;
     title: string;
     type: TrainingType;
     description?: string;
@@ -19,10 +21,15 @@ export interface TrainingTemplate {
     updatedAt?: string;
 }
 
-export type CreateTrainingTemplatePayload = Omit<
-    TrainingTemplate,
-    "id" | "ownerId" | "version" | "createdAt" | "updatedAt" | "visibility"
-> & {
+export type CreateTrainingTemplatePayload = {
+    title: string;
+    type: TrainingType;
+    description?: string;
+    equipment?: string;
+    targetIntensity?: number;
+    series: TrainingSeries[];
+    seriesRestInterval?: number;
+    seriesRestUnit?: TrainingRestUnit;
     visibility?: TrainingTemplateVisibility;
 };
 
