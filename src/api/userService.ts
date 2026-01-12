@@ -380,7 +380,13 @@ export type FriendRequestResponse = {
 
 export type InboxNotification = {
     id: string;
-    type: "friend_request_accepted" | "group_join_accepted";
+    type:
+    | "friend_request_received"
+    | "friend_request_accepted"
+    | "group_join_requested"
+    | "group_join_accepted"
+    | "group_session_shared"
+    | "group_session_removed";
     message: string;
     createdAt: string;
     data?: Record<string, any>;
