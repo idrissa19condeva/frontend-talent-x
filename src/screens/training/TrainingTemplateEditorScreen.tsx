@@ -1227,6 +1227,16 @@ export default function TrainingTemplateEditorScreen() {
             const payload = normalize(values);
             if (isEditing && templateId && !(isDefaultTemplate && duplicateDraftEnabled)) {
                 await updateTrainingTemplate(templateId, payload);
+                if (returnKey) {
+                    setNavigationResult(returnKey, { templateId, title: payload.title });
+                    if (router.canGoBack?.()) {
+                        router.back();
+                    } else {
+                        router.replace({ pathname: "/(main)/training/create", params: { templateId } } as never);
+                    }
+                    return;
+                }
+
                 Alert.alert("Template mis à jour", "Les modifications ont été enregistrées.");
                 router.replace("/(main)/training/templates");
                 return;
@@ -1290,26 +1300,51 @@ export default function TrainingTemplateEditorScreen() {
                     ]}
                 >
                     <View style={styles.fixedHeaderActions}>
-                        <Button
-                            mode="outlined"
-                            onPress={() =>
-                                router.canGoBack?.() ? router.back() : router.replace("/(main)/training/templates")
-                            }
-                            textColor="#cbd5e1"
-                            disabled={loading}
-                        >
-                            Annuler
-                        </Button>
-                        <Button
-                            mode="contained"
-                            onPress={isEditingDefault && !duplicateDraftEnabled ? handleDuplicateDefault : handleSubmit}
-                            buttonColor="#22d3ee"
-                            textColor="#02111f"
-                            disabled={loading || !submitArmed || (!canSubmit || !canEdit)}
-                            loading={loading}
-                        >
-                            {submitLabel}
-                        </Button>
+                        {isEditing && !isDefaultTemplate ? (
+                            <Button
+                                mode="outlined"
+                                onPress={handleDeleteTemplate}
+                                disabled={loading || prefillLoading}
+                                textColor="#f87171"
+                                style={styles.deleteHeaderButton}
+                                compact
+                                labelStyle={styles.fixedHeaderButtonLabel}
+                            >
+                                Supprimer
+                            </Button>
+                        ) : (
+                            <View />
+                        )}
+
+                        <View style={styles.fixedHeaderPrimaryActions}>
+                            <Button
+                                mode="outlined"
+                                onPress={() =>
+                                    router.canGoBack?.() ? router.back() : router.replace("/(main)/training/templates")
+                                }
+                                textColor="#cbd5e1"
+                                disabled={loading}
+                                compact
+                                style={styles.fixedHeaderButton}
+                                labelStyle={styles.fixedHeaderButtonLabel}
+                            >
+                                Annuler
+                            </Button>
+                            <Button
+                                mode="contained"
+                                onPress={isEditingDefault && !duplicateDraftEnabled ? handleDuplicateDefault : handleSubmit}
+                                buttonColor="#22d3ee"
+                                textColor="#02111f"
+                                disabled={loading || !submitArmed || (!canSubmit || !canEdit)}
+                                loading={loading}
+                                compact
+                                style={styles.fixedHeaderButton}
+                                contentStyle={styles.fixedHeaderPrimaryButtonContent}
+                                labelStyle={styles.fixedHeaderPrimaryButtonLabel}
+                            >
+                                {submitLabel}
+                            </Button>
+                        </View>
                     </View>
                 </View>
 
@@ -1328,18 +1363,6 @@ export default function TrainingTemplateEditorScreen() {
                         <Text style={styles.title}>{title}</Text>
                         <Text style={styles.subtitle}>Crée un template que tu pourras réutiliser.</Text>
                     </View>
-
-                    {isEditing && !isDefaultTemplate ? (
-                        <Button
-                            mode="outlined"
-                            onPress={handleDeleteTemplate}
-                            disabled={loading || prefillLoading}
-                            textColor="#f87171"
-                            style={styles.deleteButton}
-                        >
-                            Supprimer
-                        </Button>
-                    ) : null}
 
                     {isEditing && isDefaultTemplate && !duplicateDraftEnabled ? (
                         <View style={styles.defaultBanner}>
@@ -3253,8 +3276,32 @@ const styles = StyleSheet.create({
         height: 56,
         flexDirection: "row",
         justifyContent: "space-between",
-        gap: 12,
+        gap: 8,
         alignItems: "center",
+    },
+    fixedHeaderPrimaryActions: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 10,
+        flexGrow: 1,
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    fixedHeaderButton: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    fixedHeaderButtonLabel: {
+        fontSize: 12,
+        marginHorizontal: 10,
+    },
+    fixedHeaderPrimaryButtonContent: {
+        paddingHorizontal: 10,
+    },
+    fixedHeaderPrimaryButtonLabel: {
+        fontSize: 12,
+        marginHorizontal: 0,
     },
     defaultBanner: {
         borderRadius: 20,
@@ -3278,6 +3325,11 @@ const styles = StyleSheet.create({
     deleteButton: {
         borderColor: "rgba(248,113,113,0.5)",
         width: "100%",
+    },
+    deleteHeaderButton: {
+        borderColor: "rgba(248,113,113,0.5)",
+        flexShrink: 1,
+        minWidth: 0,
     },
     title: {
         fontSize: 28,

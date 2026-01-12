@@ -288,6 +288,8 @@ export default function AuthForm({
                         textColor="#f8fafc"
                         placeholderTextColor="#94a3b8"
                         error={submitted && !!errors.email}
+                        multiline={false}
+                        numberOfLines={1}
                         autoCorrect={false}
                         keyboardType="email-address"
                         autoCapitalize="none"

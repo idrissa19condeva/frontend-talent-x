@@ -65,10 +65,28 @@ const buildDurationDate = (durationMinutes: number): Date => {
 const minutesFromDate = (date: Date): number => clampDurationMinutes(date.getHours() * 60 + date.getMinutes());
 
 const formatTemplateSubtitle = (template: TrainingTemplate) => {
-    const parts: string[] = [];
-    if (template.type) parts.push(template.type);
-    if (typeof template.version === "number") parts.push(`v${template.version}`);
-    return parts.join(" · ");
+    return "";
+};
+
+const formatTrainingTypeLabel = (value?: string) => {
+    switch (value) {
+        case "vitesse":
+            return "Vitesse";
+        case "endurance":
+            return "Endurance";
+        case "force":
+            return "Force";
+        case "technique":
+            return "Technique";
+        case "récupération":
+            return "Récupération";
+        default:
+            return value || "Autres";
+    }
+};
+
+const getGroupSortKey = (label: string) => {
+    return label === "Autres" ? "~~~~" : label;
 };
 
 export default function CreateTrainingSessionWizardScreen() {
@@ -95,6 +113,9 @@ export default function CreateTrainingSessionWizardScreen() {
     const [pendingTemplateReturnKey, setPendingTemplateReturnKey] = useState<string>("");
     const pendingTemplateReturnKeyRef = useRef<string>("");
     const wasFocusedRef = useRef<boolean>(true);
+
+    const [expandedTemplateTypeIds, setExpandedTemplateTypeIds] = useState<Set<string>>(() => new Set());
+    const autoExpandedSelectedGroupRef = useRef(false);
 
     const [submitting, setSubmitting] = useState(false);
     const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -127,9 +148,11 @@ export default function CreateTrainingSessionWizardScreen() {
             setDurationMinutes(session.durationMinutes || 60);
             setPlace(session.place || "");
 
-            if (session.templateId) {
-                setSelectedTemplateId(session.templateId);
+            const hydratedTemplateId = session.templateId || session.templateSnapshot?.id;
+            if (hydratedTemplateId) {
+                setSelectedTemplateId(hydratedTemplateId);
                 setSelectedTemplateTitle(session.templateSnapshot?.title || "");
+                setTemplatePickerEnabled(true);
             }
         } catch (e: any) {
             setPrefillError(e?.message || "Impossible de charger la séance");
@@ -243,6 +266,50 @@ export default function CreateTrainingSessionWizardScreen() {
         () => (selectedTemplateId ? sortedTemplates.find((t) => t.id === selectedTemplateId) : undefined),
         [selectedTemplateId, sortedTemplates],
     );
+
+    const templatesByType = useMemo(() => {
+        const groups = new Map<string, { id: string; label: string; templates: TrainingTemplate[] }>();
+        for (const template of sortedTemplates) {
+            const typeKey = template.type || "";
+            const id = typeKey || "unknown";
+            const label = formatTrainingTypeLabel(typeKey);
+            const existing = groups.get(id);
+            if (existing) {
+                existing.templates.push(template);
+            } else {
+                groups.set(id, { id, label, templates: [template] });
+            }
+        }
+
+        return Array.from(groups.values()).sort((a, b) =>
+            getGroupSortKey(a.label).localeCompare(getGroupSortKey(b.label), "fr", { sensitivity: "base" }),
+        );
+    }, [sortedTemplates]);
+
+    const toggleTemplateGroup = useCallback((groupId: string) => {
+        setExpandedTemplateTypeIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(groupId)) next.delete(groupId);
+            else next.add(groupId);
+            return next;
+        });
+    }, []);
+
+    useEffect(() => {
+        if (step !== 2) return;
+        if (!templatePickerEnabled) return;
+        if (!selectedTemplateId) return;
+        if (autoExpandedSelectedGroupRef.current) return;
+
+        // Only auto-open when arriving with a preselected template (planification / modification flows).
+        const shouldAutoExpand = isEditMode || Boolean(initialTemplateId);
+        if (!shouldAutoExpand) return;
+
+        const group = templatesByType.find((g) => g.templates.some((t) => t.id === selectedTemplateId));
+        if (!group) return;
+        setExpandedTemplateTypeIds(new Set([group.id]));
+        autoExpandedSelectedGroupRef.current = true;
+    }, [initialTemplateId, isEditMode, selectedTemplateId, step, templatePickerEnabled, templatesByType]);
 
     const canGoNextFromStep1 = useMemo(() => {
         if (!normalizeTime(time)) return false;
@@ -582,6 +649,16 @@ export default function CreateTrainingSessionWizardScreen() {
                                     </View>
                                 ) : null}
 
+                                {isEditMode && editingSession && !selectedTemplateId ? (
+                                    <View style={styles.stateContainer}>
+                                        <Text style={styles.stateTitle}>Aucun plan associé</Text>
+                                        <Text style={styles.stateSubtitle}>
+                                            Cette séance n&apos;est pas liée à un plan d&apos;entraînement enregistré, donc &quot;Modifier ce plan&quot;
+                                            n&apos;apparaît pas. Choisis un plan via &quot;Séries et blocs&quot; (ou crée-en un nouveau).
+                                        </Text>
+                                    </View>
+                                ) : null}
+
                                 <View style={styles.choiceRow}>
                                     <Pressable
                                         accessibilityRole="button"
@@ -628,6 +705,33 @@ export default function CreateTrainingSessionWizardScreen() {
                                     </Pressable>
                                 </View>
 
+                                {selectedTemplateId ? (
+                                    <Button
+                                        mode="outlined"
+                                        onPress={() => {
+                                            if (!canGoNextFromStep1) {
+                                                Alert.alert(
+                                                    "Planification requise",
+                                                    "Renseigne d'abord la date, l'heure, la durée et le lieu.",
+                                                );
+                                                setStep(1);
+                                                return;
+                                            }
+
+                                            const returnKey = `wizard-edit-template-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                                            setPendingTemplateReturnKey(returnKey);
+                                            router.push({
+                                                pathname: "/(main)/training/templates/edit/[id]",
+                                                params: { id: selectedTemplateId, returnKey } as any,
+                                            });
+                                        }}
+                                        textColor="#22d3ee"
+                                        style={{ marginTop: 10 }}
+                                    >
+                                        Modifier ce plan
+                                    </Button>
+                                ) : null}
+
                                 {templatePickerEnabled ? (
                                     <View style={{ marginTop: 10, gap: 10 }}>
                                         {templatesLoading && !sortedTemplates.length ? (
@@ -643,36 +747,66 @@ export default function CreateTrainingSessionWizardScreen() {
                                             </View>
                                         ) : (
                                             <View style={styles.list}>
-                                                {sortedTemplates.map((template) => {
-                                                    const active = selectedTemplateId === template.id;
-                                                    return (
+                                                {templatesByType.map((group) => (
+                                                    <View key={group.id} style={styles.templateGroup}>
                                                         <Pressable
-                                                            key={template.id}
                                                             accessibilityRole="button"
-                                                            onPress={() => {
-                                                                setSelectedTemplateId(template.id);
-                                                                setSelectedTemplateTitle(template.title);
-                                                            }}
+                                                            onPress={() => toggleTemplateGroup(group.id)}
                                                             style={({ pressed }) => [
-                                                                styles.templateRow,
-                                                                active && styles.templateRowActive,
-                                                                pressed && styles.templateRowPressed,
+                                                                styles.templateGroupHeader,
+                                                                pressed && styles.templateGroupHeaderPressed,
                                                             ]}
                                                         >
-                                                            <View style={styles.templateRowIcon}>
+                                                            <View style={styles.templateGroupHeaderLeft}>
                                                                 <MaterialCommunityIcons
-                                                                    name={active ? "check-circle" : "checkbox-blank-circle-outline"}
-                                                                    size={16}
-                                                                    color={active ? "#22d3ee" : "#94a3b8"}
+                                                                    name={expandedTemplateTypeIds.has(group.id) ? "chevron-down" : "chevron-right"}
+                                                                    size={18}
+                                                                    color="#94a3b8"
                                                                 />
+                                                                <Text style={styles.templateGroupTitle}>{group.label}</Text>
                                                             </View>
-                                                            <View style={styles.templateRowMain}>
-                                                                <Text style={styles.templateRowTitle}>{template.title}</Text>
-                                                                <Text style={styles.templateRowSubtitle}>{formatTemplateSubtitle(template)}</Text>
-                                                            </View>
+                                                            <Text style={styles.templateGroupCount}>{group.templates.length}</Text>
                                                         </Pressable>
-                                                    );
-                                                })}
+
+                                                        {expandedTemplateTypeIds.has(group.id) ? (
+                                                            <View style={styles.templateGroupList}>
+                                                                {group.templates.map((template) => {
+                                                                    const active = selectedTemplateId === template.id;
+                                                                    const subtitle = formatTemplateSubtitle(template);
+                                                                    return (
+                                                                        <Pressable
+                                                                            key={template.id}
+                                                                            accessibilityRole="button"
+                                                                            onPress={() => {
+                                                                                setSelectedTemplateId(template.id);
+                                                                                setSelectedTemplateTitle(template.title);
+                                                                            }}
+                                                                            style={({ pressed }) => [
+                                                                                styles.templateRow,
+                                                                                active && styles.templateRowActive,
+                                                                                pressed && styles.templateRowPressed,
+                                                                            ]}
+                                                                        >
+                                                                            <View style={styles.templateRowIcon}>
+                                                                                <MaterialCommunityIcons
+                                                                                    name={active ? "check-circle" : "checkbox-blank-circle-outline"}
+                                                                                    size={16}
+                                                                                    color={active ? "#22d3ee" : "#94a3b8"}
+                                                                                />
+                                                                            </View>
+                                                                            <View style={styles.templateRowMain}>
+                                                                                <Text style={styles.templateRowTitle}>{template.title}</Text>
+                                                                                {subtitle ? (
+                                                                                    <Text style={styles.templateRowSubtitle}>{subtitle}</Text>
+                                                                                ) : null}
+                                                                            </View>
+                                                                        </Pressable>
+                                                                    );
+                                                                })}
+                                                            </View>
+                                                        ) : null}
+                                                    </View>
+                                                ))}
                                             </View>
                                         )}
                                     </View>
@@ -883,6 +1017,39 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     list: {
+        gap: 10,
+    },
+    templateGroup: {
+        gap: 10,
+    },
+    templateGroupHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+    },
+    templateGroupHeaderPressed: {
+        opacity: 0.9,
+    },
+    templateGroupHeaderLeft: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    templateGroupTitle: {
+        color: "#cbd5e1",
+        fontSize: 12,
+        fontWeight: "900",
+        letterSpacing: 0.2,
+        textTransform: "uppercase",
+    },
+    templateGroupCount: {
+        color: "#94a3b8",
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    templateGroupList: {
         gap: 10,
     },
     templateRow: {
