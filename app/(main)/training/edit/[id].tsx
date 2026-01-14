@@ -1,6 +1,6 @@
 import React from "react";
-import CreateTrainingSessionScreen from "../../../../src/screens/training/CreateTrainingSessionScreen";
+import CreateTrainingSessionWizardScreen from "../../../../src/screens/training/CreateTrainingSessionWizardScreen";
 
 export default function TrainingEditRoute() {
-    return <CreateTrainingSessionScreen />;
+    return <CreateTrainingSessionWizardScreen />;
 }

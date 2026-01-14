@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, Keyboard, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 import { ActivityIndicator, Avatar, Button, Dialog, Portal, Switch, Text, TextInput } from "react-native-paper";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useIsFocused } from "@react-navigation/native";
@@ -34,7 +34,6 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { searchUsers, updateUserProfile, UserSearchResult } from "../../api/userService";
-import { createTrainingTemplate } from "../../api/trainingTemplateService";
 
 type MaterialIconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
@@ -42,6 +41,61 @@ type PaceWarningPromptState = {
     reference: PaceReferenceValue;
     label: string;
     mode: "distance" | "load";
+};
+
+const UI_COLORS = {
+    background: "#010617",
+    surface: "rgba(2,6,23,0.92)",
+    surfaceMuted: "rgba(4,9,24,0.9)",
+    surfaceChip: "rgba(15,23,42,0.7)",
+    border: "rgba(148,163,184,0.22)",
+    borderStrong: "rgba(148,163,184,0.32)",
+    text: "#f8fafc",
+    textMuted: "#94a3b8",
+    accent: "#22d3ee",
+    danger: "#f87171",
+} as const;
+
+const withAlpha = (color: string, alpha: number) => {
+    const clamped = Math.max(0, Math.min(1, alpha));
+    const trimmed = `${color}`.trim();
+
+    if (trimmed.startsWith("rgba(")) {
+        const match = trimmed.match(/rgba\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([0-9.]+)\)/i);
+        if (!match) return trimmed;
+        const r = Number(match[1]);
+        const g = Number(match[2]);
+        const b = Number(match[3]);
+        return `rgba(${r},${g},${b},${clamped})`;
+    }
+
+    if (trimmed.startsWith("rgb(")) {
+        const match = trimmed.match(/rgb\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\)/i);
+        if (!match) return trimmed;
+        const r = Number(match[1]);
+        const g = Number(match[2]);
+        const b = Number(match[3]);
+        return `rgba(${r},${g},${b},${clamped})`;
+    }
+
+    if (trimmed.startsWith("#")) {
+        const hex = trimmed.slice(1);
+        const normalized = hex.length === 3
+            ? hex
+                .split("")
+                .map((ch) => `${ch}${ch}`)
+                .join("")
+            : hex;
+
+        if (normalized.length !== 6) return trimmed;
+        const r = Number.parseInt(normalized.slice(0, 2), 16);
+        const g = Number.parseInt(normalized.slice(2, 4), 16);
+        const b = Number.parseInt(normalized.slice(4, 6), 16);
+        if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return trimmed;
+        return `rgba(${r},${g},${b},${clamped})`;
+    }
+
+    return trimmed;
 };
 
 const formatDisplayDate = (value?: string) => {
@@ -78,11 +132,11 @@ const STATUS_VISUALS: Record<
     string,
     { icon: MaterialIconName; color: string }
 > = {
-    planned: { icon: "calendar-check", color: "#facc15" },
-    ongoing: { icon: "progress-clock", color: "#34d399" },
-    done: { icon: "check-circle-outline", color: "#10b981" },
-    canceled: { icon: "close-octagon", color: "#f87171" },
-    postponed: { icon: "calendar-clock", color: "#38bdf8" },
+    planned: { icon: "calendar-check", color: UI_COLORS.accent },
+    ongoing: { icon: "progress-clock", color: UI_COLORS.accent },
+    done: { icon: "check-circle-outline", color: UI_COLORS.textMuted },
+    canceled: { icon: "close-octagon", color: UI_COLORS.danger },
+    postponed: { icon: "calendar-clock", color: UI_COLORS.textMuted },
 };
 
 const resolveStatusVisual = (status?: string) => STATUS_VISUALS[status || ""] || STATUS_VISUALS.planned;
@@ -123,12 +177,33 @@ const BLOCK_TYPE_LABELS: Record<TrainingBlockType, string> = {
     vitesse: "Vitesse",
     cotes: "Côtes",
     ppg: "PPG",
-    start: "Starting Block",
+    start: "Départs",
+    muscu: "Muscu",
     recup: "Récupération",
     custom: "Bloc personnalisé",
 };
 
-const NON_DISTANCE_BLOCK_TYPES: TrainingBlockType[] = ["ppg", "start", "recup"];
+const BLOCK_TYPE_ICONS: Record<TrainingBlockType, MaterialIconName> = {
+    vitesse: "run-fast",
+    cotes: "elevation-rise",
+    ppg: "arm-flex-outline",
+    start: "flag-checkered",
+    muscu: "dumbbell",
+    recup: "walk",
+    custom: "pencil-outline",
+};
+
+const BLOCK_TYPE_ACCENTS: Record<TrainingBlockType, string> = {
+    vitesse: UI_COLORS.accent,
+    cotes: UI_COLORS.textMuted,
+    ppg: UI_COLORS.accent,
+    start: UI_COLORS.text,
+    muscu: UI_COLORS.danger,
+    recup: UI_COLORS.textMuted,
+    custom: UI_COLORS.accent,
+};
+
+const NON_DISTANCE_BLOCK_TYPES: TrainingBlockType[] = ["ppg", "muscu", "start", "recup"];
 
 const isDistanceDrivenSegment = (segment: TrainingSeriesSegment, blockType: TrainingBlockType) => {
     if (blockType === "cotes" && segment.cotesMode === "duration") {
@@ -186,6 +261,25 @@ const formatOptionalRepetitions = (value?: number) => {
     return `${value} répétition${suffix}`;
 };
 
+const formatRecoveryModeLabel = (value?: string) => {
+    switch (value) {
+        case "marche":
+            return "Marche";
+        case "footing":
+            return "Footing";
+        case "passive":
+            return "Passive";
+        case "active":
+            return "Active";
+        default:
+            return value || "—";
+    }
+};
+
+const normalizeExercises = (value?: string[]) => {
+    return Array.isArray(value) ? value.map((item) => (item || "").trim()).filter(Boolean) : [];
+};
+
 const toParticipantRef = (value?: ParticipantUserRef | string): ParticipantUserRef | null => {
     if (!value) {
         return null;
@@ -223,7 +317,8 @@ const getParticipantDisplayName = (value?: ParticipantUserRef | string | null) =
     return value.fullName?.trim() || value.username?.trim() || buildFallbackLabel(value.id || value._id);
 };
 
-const PARTICIPANT_COLORS = ["#38bdf8", "#10b981", "#f472b6", "#f97316", "#22d3ee"];
+// Keep variety for participant differentiation, but within a single hue family.
+const PARTICIPANT_COLORS = ["#22d3ee", "#38bdf8", "#0ea5e9", "#7dd3fc", "#0284c7"];
 
 const getParticipantColor = (seed?: string) => {
     if (!seed) {
@@ -372,6 +467,32 @@ export default function TrainingSessionDetailScreen() {
         [paceProfile.bodyWeightKg, paceProfile.maxChariotKg, paceProfile.maxMuscuKg],
     );
 
+    const [recapExpanded, setRecapExpanded] = useState(false);
+    const [flowExpanded, setFlowExpanded] = useState(false);
+    const [participantsExpanded, setParticipantsExpanded] = useState(false);
+    const [coachNotesExpanded, setCoachNotesExpanded] = useState(false);
+    const [athleteFeedbackExpanded, setAthleteFeedbackExpanded] = useState(false);
+    const [expandedSeriesKeys, setExpandedSeriesKeys] = useState<Set<string>>(() => new Set());
+
+    const getSeriesKey = useCallback((serie: TrainingSeries, index: number) => {
+        return serie.id ? `id:${serie.id}` : `idx:${index}`;
+    }, []);
+
+    const toggleSeriesExpanded = useCallback(
+        (key: string) => {
+            setExpandedSeriesKeys((prev) => {
+                const next = new Set(prev);
+                if (next.has(key)) {
+                    next.delete(key);
+                } else {
+                    next.add(key);
+                }
+                return next;
+            });
+        },
+        [setExpandedSeriesKeys],
+    );
+
     useEffect(() => {
         if (isFocused) {
             refresh();
@@ -395,7 +516,6 @@ export default function TrainingSessionDetailScreen() {
         [getProfileLoadValue, hasRecordForReference],
     );
     const [deleteLoading, setDeleteLoading] = useState(false);
-    const [templateSaving, setTemplateSaving] = useState(false);
     const [joinLoading, setJoinLoading] = useState(false);
     const [leaveLoading, setLeaveLoading] = useState(false);
     const [participantDialogVisible, setParticipantDialogVisible] = useState(false);
@@ -554,33 +674,6 @@ export default function TrainingSessionDetailScreen() {
             setDeleteLoading(false);
         }
     }, [deleteSessionFromContext, router, sessionId]);
-
-    const handleSaveAsTemplate = useCallback(async () => {
-        if (!session || templateSaving) return;
-        try {
-            setTemplateSaving(true);
-            await createTrainingTemplate({
-                title: session.title,
-                type: session.type,
-                description: session.description,
-                equipment: session.equipment,
-                targetIntensity: session.targetIntensity,
-                series: session.series,
-                seriesRestInterval: session.seriesRestInterval,
-                seriesRestUnit: session.seriesRestUnit,
-            });
-            Alert.alert("Template créé", "Retrouve-le dans 'Templates'.", [
-                { text: "OK", onPress: () => router.push("/(main)/training/templates") },
-            ]);
-        } catch (err: any) {
-            Alert.alert(
-                "Erreur",
-                err?.response?.data?.message || err?.message || "Impossible de créer le template",
-            );
-        } finally {
-            setTemplateSaving(false);
-        }
-    }, [router, session, templateSaving]);
 
     const confirmDeleteSession = useCallback(() => {
         if (!sessionId) {
@@ -951,7 +1044,7 @@ export default function TrainingSessionDetailScreen() {
         return (
             <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
                 <View style={styles.stateContainer}>
-                    <ActivityIndicator color="#22d3ee" />
+                    <ActivityIndicator color={UI_COLORS.accent} />
                 </View>
             </SafeAreaView>
         );
@@ -1036,8 +1129,9 @@ export default function TrainingSessionDetailScreen() {
             }
             const serieVolume = segments.reduce((segmentSum, segment) => {
                 const blockType = resolveBlockType(segment);
+                const distanceDriven = isDistanceDrivenSegment(segment, blockType);
                 const reps = getSegmentPlannedRepetitions(segment, blockType);
-                const segmentMeters = getSegmentPlannedDistanceMeters(segment, blockType);
+                const segmentMeters = distanceDriven ? getSegmentPlannedDistanceMeters(segment, blockType) : 0;
                 return segmentSum + segmentMeters * reps;
             }, 0);
             acc.volume += serieVolume * repeatCount;
@@ -1056,6 +1150,7 @@ export default function TrainingSessionDetailScreen() {
     const hasDistanceInAnySegment = series.some(serie =>
         (serie.segments || []).some(segment => {
             const blockType = resolveBlockType(segment);
+            if (!isDistanceDrivenSegment(segment, blockType)) return false;
             const meters = getSegmentPlannedDistanceMeters(segment, blockType);
             return typeof meters === "number" && meters > 0;
         })
@@ -1133,61 +1228,85 @@ export default function TrainingSessionDetailScreen() {
     };
 
     const renderStandardSegmentDetails = (segment: TrainingSeriesSegment, blockType: TrainingBlockType) => {
-        let chipsToShow: string[] = [];
-        let extraExercises: string[] = [];
-        if (blockType === "ppg") {
-            // Exercices d'abord
-            extraExercises = Array.isArray(segment.ppgExercises)
-                ? segment.ppgExercises.filter((exercise): exercise is string => Boolean(exercise && exercise.trim()))
-                : [];
-            // Durée
-            if (segment.ppgDurationSeconds) {
-                chipsToShow.push(`Durée: ${formatRestDisplay(segment.ppgDurationSeconds, "s")}`);
-            }
-            // Récup
-            chipsToShow.push(`Récup: ${formatRestDisplay(segment.ppgRestSeconds, "s")}`);
-        } else if (blockType === "start") {
-            // Sortie d'abord (avec bulle)
-            if (typeof segment.startExitDistance === "number") {
-                chipsToShow.push(`Sortie sur ${formatDistanceDisplay(segment.startExitDistance, segment.distanceUnit)}`);
-            }
-            // Puis récup (avec bulle)
-            chipsToShow.push(`Récup: ${formatRestDisplay(segment.restInterval, segment.restUnit)}`);
-            if (segment.targetPace) {
-                chipsToShow.push(`Allure ${segment.targetPace}`);
-            }
-        } else if (blockType === "recup") {
-            // Affichage spécifique pour le bloc récup : mode, durée, récup rep
-            if (segment.recoveryMode) {
-                chipsToShow.push(`Mode de récup : ${segment.recoveryMode}`);
-            }
-            if (segment.recoveryDurationSeconds) {
-                chipsToShow.push(`Durée: ${formatRestDisplay(segment.recoveryDurationSeconds, "s")}`);
-            }
-            chipsToShow.push(`Récup rep: ${formatRestDisplay(segment.restInterval, segment.restUnit)}`);
-        } else {
-            chipsToShow.push(`Récup: ${formatRestDisplay(segment.restInterval, segment.restUnit)}`);
-            if (segment.targetPace) {
-                chipsToShow.push(`Allure ${segment.targetPace}`);
-            }
-        }
+        const chipsToShow: string[] = [];
+        const extraExercises =
+            blockType === "ppg"
+                ? normalizeExercises(segment.ppgExercises)
+                : blockType === "muscu"
+                    ? normalizeExercises(segment.muscuExercises)
+                    : [];
 
+        // Primary metric line (distance or duration depending on block).
+        const showDurationForCotes = blockType === "cotes" && segment.cotesMode === "duration";
         const isDistanceDriven = isDistanceDrivenSegment(segment, blockType);
         const showDistance = isDistanceDriven && typeof segment.distance === "number" && segment.distance > 0;
-        const showDurationForCotes = blockType === "cotes" && segment.cotesMode === "duration";
-        const formattedDuration = showDurationForCotes ? formatRestDisplay(segment.durationSeconds, "s") : null;
-        const durationLabelPrefix = showDurationForCotes ? "Durée" : null;
+
+        if (blockType === "ppg") {
+            const mode = segment.ppgMode || "time";
+            chipsToShow.push(mode === "reps" ? "Mode: répétitions" : "Mode: temps");
+            if (mode === "reps") {
+                if (segment.ppgRepetitions) {
+                    chipsToShow.push(`Rép/exo: ${segment.ppgRepetitions}`);
+                }
+            } else {
+                chipsToShow.push(`Durée/exo: ${formatRestDisplay(segment.ppgDurationSeconds, "s")}`);
+            }
+            chipsToShow.push(`Récup/exo: ${formatRestDisplay(segment.ppgRestSeconds, "s")}`);
+
+            // Optional: if restInterval is used as between-round rest, surface it when relevant.
+            if (segment.restInterval || segment.restInterval === 0) {
+                if (segment.restInterval > 0) {
+                    chipsToShow.push(`Repos: ${formatRestDisplay(segment.restInterval, segment.restUnit)}`);
+                }
+            }
+        } else if (blockType === "muscu") {
+            if (segment.muscuRepetitions) {
+                chipsToShow.push(`Rép/exo: ${segment.muscuRepetitions}`);
+            }
+            chipsToShow.push(`Repos: ${formatRestDisplay(segment.restInterval, segment.restUnit)}`);
+        } else if (blockType === "start") {
+            if (typeof segment.startCount === "number" && segment.startCount > 0) {
+                chipsToShow.push(`Départs: ${segment.startCount}`);
+            }
+            if (typeof segment.startExitDistance === "number" && segment.startExitDistance > 0) {
+                chipsToShow.push(`Sortie: ${formatDistanceDisplay(segment.startExitDistance, segment.distanceUnit)}`);
+            }
+            chipsToShow.push(`Repos: ${formatRestDisplay(segment.restInterval, segment.restUnit)}`);
+            if (segment.targetPace) {
+                chipsToShow.push(`Allure: ${segment.targetPace}`);
+            }
+        } else if (blockType === "recup") {
+            if (segment.recoveryMode) {
+                chipsToShow.push(`Mode: ${formatRecoveryModeLabel(segment.recoveryMode)}`);
+            }
+            if (segment.durationSeconds) {
+                chipsToShow.push(`Effort: ${formatRestDisplay(segment.durationSeconds, "s")}`);
+            }
+            if (segment.recoveryDurationSeconds) {
+                chipsToShow.push(`Récup: ${formatRestDisplay(segment.recoveryDurationSeconds, "s")}`);
+            }
+            if (segment.restInterval || segment.restInterval === 0) {
+                if (segment.restInterval > 0) {
+                    chipsToShow.push(`Repos: ${formatRestDisplay(segment.restInterval, segment.restUnit)}`);
+                }
+            }
+        } else {
+            // vitesse / cotes / other
+            chipsToShow.push(`Repos: ${formatRestDisplay(segment.restInterval, segment.restUnit)}`);
+            if (segment.targetPace) {
+                chipsToShow.push(`Allure: ${segment.targetPace}`);
+            }
+            if (blockType === "cotes") {
+                chipsToShow.push(`Format: ${(segment.cotesMode || "distance") === "duration" ? "durée" : "distance"}`);
+            }
+        }
 
         return (
             <>
                 {showDurationForCotes ? (
-                    <Text style={styles.segmentDistance}>
-                        {durationLabelPrefix} {formattedDuration ?? "—"}
-                    </Text>
+                    <Text style={styles.segmentDistance}>{`Durée ${formatRestDisplay(segment.durationSeconds, "s")}`}</Text>
                 ) : showDistance ? (
-                    <Text style={styles.segmentDistance}>
-                        {formatDistanceDisplay(segment.distance, segment.distanceUnit)}
-                    </Text>
+                    <Text style={styles.segmentDistance}>{formatDistanceDisplay(segment.distance, segment.distanceUnit)}</Text>
                 ) : null}
                 <View style={styles.segmentMetaRow}>
                     {chipsToShow.map((chip, idx) => (
@@ -1196,10 +1315,17 @@ export default function TrainingSessionDetailScreen() {
                         </View>
                     ))}
                 </View>
-                {blockType === "ppg" && extraExercises.length ? (
-                    <View style={styles.segmentMetaChip}>
-                        <Text style={styles.segmentMetaChipText}>exo: {extraExercises.join(", ")}</Text>
-                    </View>
+                {extraExercises.length ? (
+                    <>
+                        <Text style={styles.segmentNote}>{`Exercices (${extraExercises.length})`}</Text>
+                        <View style={styles.segmentExtraList}>
+                            {extraExercises.map((exercise, idx) => (
+                                <View key={`${segment.id}-exercise-${idx}`} style={styles.segmentExtraChip}>
+                                    <Text style={styles.segmentExtraChipText}>{exercise}</Text>
+                                </View>
+                            ))}
+                        </View>
+                    </>
                 ) : null}
             </>
         );
@@ -1259,210 +1385,438 @@ export default function TrainingSessionDetailScreen() {
 
     const navClearance = 68 + Math.max(insets.bottom, 10);
     const contentPaddingBottom = navClearance + 24;
-    const footerPaddingBottom = Math.max(insets.bottom + 10, 18);
 
     return (
         <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
+            {isOwner ? (
+                <View style={styles.topActionsBar}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Modifier la séance"
+                        onPress={handleEditSession}
+                        disabled={sessionLocked}
+                        style={({ pressed }) => [
+                            styles.heroActionButton,
+                            sessionLocked && styles.heroActionButtonDisabled,
+                            pressed && !sessionLocked && styles.heroActionButtonPressed,
+                        ]}
+                    >
+                        <MaterialCommunityIcons name="pencil" size={14} color={UI_COLORS.background} />
+                        <Text style={styles.heroActionButtonLabel}>Modifier</Text>
+                    </Pressable>
+
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Supprimer la séance"
+                        onPress={confirmDeleteSession}
+                        disabled={deleteLoading}
+                        style={({ pressed }) => [
+                            styles.heroActionButton,
+                            styles.heroActionButtonDanger,
+                            deleteLoading && styles.heroActionButtonDisabled,
+                            pressed && !deleteLoading && styles.heroActionButtonPressed,
+                        ]}
+                    >
+                        {deleteLoading ? (
+                            <ActivityIndicator size="small" color={UI_COLORS.danger} />
+                        ) : (
+                            <MaterialCommunityIcons name="delete-outline" size={14} color={UI_COLORS.danger} />
+                        )}
+                        <Text style={[styles.heroActionButtonLabel, styles.heroActionButtonLabelDanger]}>Supprimer</Text>
+                    </Pressable>
+                </View>
+            ) : null}
             <ScrollView
                 contentContainerStyle={[styles.container, { paddingBottom: contentPaddingBottom }]}
                 refreshControl={
                     <RefreshControl
                         refreshing={loading}
                         onRefresh={handleRefresh}
-                        tintColor="#22d3ee"
-                        colors={["#22d3ee"]}
+                        tintColor={UI_COLORS.accent}
+                        colors={[UI_COLORS.accent]}
                     />
                 }
             >
-                {/* HERO CARD */}
-                <View style={[styles.heroCard]}>
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Modifier la planification"
-                        onPress={handleEditSession}
-                    >
-                        <View style={styles.heroHeaderRow}>
-                            {/* Date à gauche, Type à droite */}
-                            <View style={{ flex: 1 }}>
-                                <View style={styles.heroHeaderItemRow}>
-                                    <MaterialCommunityIcons name="calendar-range" size={14} color="#22d3ee" style={{ marginRight: 3 }} />
-                                    <Text style={styles.heroHeaderDate}>{formattedDate}</Text>
-                                </View>
-                                <View style={styles.heroHeaderItemRow}>
-                                    <MaterialCommunityIcons name="map-marker" size={13} color="#e01010ff" style={{ marginRight: 3 }} />
-                                    <Text style={styles.heroHeaderPlace}>{session.place?.trim() || "—"}</Text>
-                                </View>
-                            </View>
-                            <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                                <View style={styles.heroHeaderItemRow}>
-                                    <MaterialCommunityIcons name="run-fast" size={14} color="#38bdf8" style={{ marginRight: 3 }} />
-                                    <Text style={styles.heroHeaderType}>{session.type}</Text>
-                                </View>
-                                <View style={styles.heroHeaderItemRow}>
-                                    <MaterialCommunityIcons
-                                        name={statusVisual.icon}
-                                        size={13}
-                                        color={statusVisual.color}
-                                        style={{ marginRight: 3 }}
-                                    />
-                                    <Text style={[styles.heroHeaderStatus, { color: statusVisual.color }]}>{statusLabel}</Text>
-                                </View>
-                            </View>
-                        </View>
-                        <View style={styles.heroTimeRow}>
-                            <View style={styles.heroHeaderItemRow}>
-                                <MaterialCommunityIcons name="clock-outline" size={13} color="#38bdf8" style={{ marginRight: 3 }} />
-                                <Text style={styles.heroHeaderDate}>{sessionTimeLabel}</Text>
-                            </View>
-                            <View style={styles.heroHeaderItemRow}>
-                                <MaterialCommunityIcons name="timer-outline" size={13} color="#facc15" style={{ marginRight: 3 }} />
-                                <Text style={styles.heroHeaderDate}>{sessionDurationLabel}</Text>
-                            </View>
-                        </View>
-                    </Pressable>
-                    <Text style={styles.heroTitle}>{session.title}</Text>
-                    {session.description ? <Text style={styles.heroSubtitle}>{session.description}</Text> : null}
-                    {/* Affichage des équipements supprimé */}
-                </View>
+                {isOwner && sessionLocked ? (
+                    <View style={styles.sessionLockedBanner}>
+                        <MaterialCommunityIcons name="lock-outline" size={16} color="#f8fafc" />
+                        <Text style={styles.sessionLockedText}>
+                            {lockReasonLabel
+                                ? `Séance ${lockReasonLabel}. Modification impossible.`
+                                : "Cette séance est clôturée. Modification impossible."}
+                        </Text>
+                    </View>
+                ) : null}
 
-                {/* METRICS CARD */}
-                <View style={[styles.metricsCard]}>
-                    <Text style={styles.sectionHeading}>Récap express de la séance</Text>
-                    <View style={styles.metricsGrid}>
-                        {expressMetrics.map((metric, idx) => (
-                            <View key={metric.label} style={[styles.metricItem, { backgroundColor: idx === 1 ? 'rgba(250,204,21,0.08)' : 'rgba(56,189,248,0.08)' }]}>
-                                <Text style={[styles.metricValue, idx === 1 && { color: '#facc15' }]}>{metric.value}</Text>
-                                <Text style={styles.metricLabel}>{metric.label}</Text>
+                {/* NOUVEAU LAYOUT: SUMMARY + STATS + TIMELINE */}
+                <View style={[styles.card, styles.summaryCard]}>
+                    <View style={styles.summaryTopRow}>
+
+                        <View style={{ flex: 1, gap: 8 }}>
+                            <View style={styles.summaryHeaderRow}>
+                                <Text style={styles.summaryTitle}>{session.title}</Text>
+                                <View
+                                    style={[
+                                        styles.statusPill,
+                                        statusVisual.color === UI_COLORS.danger
+                                            ? styles.statusPillDanger
+                                            : statusVisual.color === UI_COLORS.accent
+                                                ? styles.statusPillAccent
+                                                : null,
+                                    ]}
+                                >
+                                    <MaterialCommunityIcons name={statusVisual.icon} size={13} color={statusVisual.color} />
+                                    <Text style={[styles.statusPillText, { color: statusVisual.color }]}>{statusLabel}</Text>
+                                </View>
                             </View>
-                        ))}
+
+                            <View style={styles.summaryTypeRow}>
+                                <MaterialCommunityIcons name="run-fast" size={14} color={UI_COLORS.textMuted} />
+                                <Text style={styles.summarySubtitle}>{session.type}</Text>
+                            </View>
+                        </View>
+                    </View>
+
+                    {session.description ? <Text style={styles.summaryDescription}>{session.description}</Text> : null}
+
+                    <View style={styles.summaryDivider} />
+
+                    <View style={styles.metaGrid}>
+                        <View style={[styles.metaColumn, styles.metaColumnWide]}>
+                            <View style={styles.metaItem}>
+                                <View style={styles.metaItemIcon}>
+                                    <MaterialCommunityIcons name="calendar-range" size={16} color={UI_COLORS.accent} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.metaGridLabel}>Date</Text>
+                                    <Text style={styles.metaGridValue} numberOfLines={2} ellipsizeMode="tail">
+                                        {formattedDate}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.metaItem}>
+                                <View style={styles.metaItemIcon}>
+                                    <MaterialCommunityIcons name="map-marker" size={16} color={UI_COLORS.danger} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.metaGridLabel}>Lieu</Text>
+                                    <Text style={styles.metaGridValue} numberOfLines={2} ellipsizeMode="tail">
+                                        {session.place?.trim() || "—"}
+                                    </Text>
+                                </View>
+                            </View>
+                        </View>
+
+                        <View style={[styles.metaColumn, styles.metaColumnNarrow]}>
+                            <View style={styles.metaItem}>
+                                <View style={styles.metaItemIcon}>
+                                    <MaterialCommunityIcons name="clock-outline" size={16} color={UI_COLORS.accent} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.metaGridLabel}>Heure</Text>
+                                    <Text style={styles.metaGridValue}>{sessionTimeLabel}</Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.metaItem}>
+                                <View style={styles.metaItemIcon}>
+                                    <MaterialCommunityIcons name="timer-outline" size={16} color={UI_COLORS.accent} />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.metaGridLabel}>Durée</Text>
+                                    <Text style={styles.metaGridValue} numberOfLines={2} ellipsizeMode="tail">
+                                        {sessionDurationLabel}
+                                    </Text>
+                                </View>
+                            </View>
+                        </View>
                     </View>
                 </View>
 
-                {/* SÉRIES ET BLOCS */}
-                {series.length ? (
-                    <View style={[styles.blockCard]}>
-                        <View style={styles.blockHeader}>
-                            <Text style={styles.sectionHeading}>Déroulement de la séance</Text>
-                            {/* Suppression de l'affichage du volume */}
+                <View style={[styles.card, styles.statsCard]}>
+                    <View style={styles.sectionTopRow}>
+                        <View style={styles.sectionTitleRow}>
+                            <MaterialCommunityIcons name="chart-box-outline" size={16} color={UI_COLORS.accent} />
+                            <Text style={styles.sectionHeading}>Stats</Text>
                         </View>
-                        {/* Suppression de l'affichage du repos entre séries */}
-                        <View style={styles.seriesList}>
-                            {series.map((serie, index) => {
-                                const referenceLabel = formatReferenceLabel(serie.paceReferenceDistance);
-                                const showPaceWarning = shouldWarnAboutPace(serie);
-                                const canShowPaceWarningButton = Boolean(showPaceWarning && serie.paceReferenceDistance);
-                                return (
-                                    <View key={serie.id ?? index} style={[styles.seriesCard]}>
-                                        <View style={styles.seriesHeader}>
-                                            <View>
-                                                <Text style={styles.seriesBadge}>Série {index + 1}</Text>
-                                                <Text style={styles.seriesTitle}>
-                                                    {(serie.segments || []).length || 1} {((serie.segments || []).length || 1) === 1 ? 'bloc' : 'blocs'}
-                                                </Text>
-                                            </View>
-                                            <View style={[styles.seriesRepeatPill, { backgroundColor: 'rgba(56,189,248,0.10)' }]}>
-                                                <Text style={styles.seriesRepeatValue}>×{serie.repeatCount ?? 1} fois</Text>
-                                            </View>
-                                        </View>
-                                        {serie.enablePace ? (
-                                            <View style={styles.paceRow}>
-                                                <View style={styles.paceChip}>
-                                                    <Text style={styles.paceChipText}>Intensité: {serie.pacePercent ?? "—"}%</Text>
-                                                </View>
-                                                {referenceLabel ? (
-                                                    <>
-                                                        <View style={styles.paceChip}>
-                                                            <Text style={styles.paceChipText}>Réf {referenceLabel}</Text>
-                                                        </View>
-                                                        {canShowPaceWarningButton ? (
-                                                            <Pressable
-                                                                onPress={() =>
-                                                                    openPaceWarningPrompt(
-                                                                        serie.paceReferenceDistance as PaceReferenceValue,
-                                                                    )
-                                                                }
-                                                                accessibilityRole="button"
-                                                                accessibilityLabel={`Compléter votre profil pour ${referenceLabel}`}
-                                                                style={({ pressed }) => [
-                                                                    styles.paceWarningButton,
-                                                                    pressed && styles.paceWarningButtonPressed,
-                                                                ]}
-                                                                hitSlop={6}
-                                                            >
-                                                                <MaterialCommunityIcons
-                                                                    name="alert-circle"
-                                                                    size={16}
-                                                                    color="#f87171"
-                                                                />
-                                                            </Pressable>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={recapExpanded ? "Masquer les stats" : "Afficher les stats"}
+                            onPress={() => setRecapExpanded((value) => !value)}
+                            style={({ pressed }) => [styles.sectionToggle, pressed && styles.sectionTogglePressed]}
+                        >
+                            <Text style={styles.sectionToggleText}>{recapExpanded ? "Masquer" : "Afficher"}</Text>
+                            <MaterialCommunityIcons
+                                name={recapExpanded ? "chevron-up" : "chevron-down"}
+                                size={18}
+                                color={UI_COLORS.textMuted}
+                            />
+                        </Pressable>
+                    </View>
+
+                    {recapExpanded ? (
+                        <View style={styles.statTilesGrid}>
+                            {expressMetrics.map((metric) => (
+                                <View
+                                    key={metric.label}
+                                    style={styles.statTile}
+                                >
+                                    <Text style={styles.statTileValue}>{metric.value}</Text>
+                                    <Text style={styles.statTileLabel}>{metric.label}</Text>
+                                </View>
+                            ))}
+                        </View>
+                    ) : null}
+                </View>
+
+                {series.length ? (
+                    <View style={[styles.card, styles.timelineContainer]}>
+                        <View style={styles.sectionTopRow}>
+                            <View style={styles.sectionTitleRow}>
+                                <MaterialCommunityIcons name="timeline-outline" size={16} color={UI_COLORS.accent} />
+                                <Text style={styles.sectionHeading}>Déroulement</Text>
+                            </View>
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel={flowExpanded ? "Masquer le déroulement" : "Afficher le déroulement"}
+                                onPress={() => setFlowExpanded((value) => !value)}
+                                style={({ pressed }) => [styles.sectionToggle, pressed && styles.sectionTogglePressed]}
+                            >
+                                <Text style={styles.sectionToggleText}>{flowExpanded ? "Masquer" : "Afficher"}</Text>
+                                <MaterialCommunityIcons
+                                    name={flowExpanded ? "chevron-up" : "chevron-down"}
+                                    size={18}
+                                    color={UI_COLORS.textMuted}
+                                />
+                            </Pressable>
+                        </View>
+
+                        {flowExpanded ? (
+                            <View style={styles.timelineList}>
+                                {series.map((serie, index) => {
+                                    const seriesKey = getSeriesKey(serie, index);
+                                    const seriesExpanded = expandedSeriesKeys.has(seriesKey);
+                                    const referenceLabel = formatReferenceLabel(serie.paceReferenceDistance);
+                                    const showPaceWarning = shouldWarnAboutPace(serie);
+                                    const canShowPaceWarningButton = Boolean(showPaceWarning && serie.paceReferenceDistance);
+                                    const segmentsCount = (serie.segments || []).length || 1;
+                                    const repeatCount = Math.max(serie.repeatCount ?? 1, 1);
+                                    // Timeline gutter removed: keep full-width cards
+
+                                    return (
+                                        <View
+                                            key={serie.id ?? index}
+                                            style={[styles.timelineItem, styles.timelineItemNoGutter]}
+                                        >
+                                            <View style={styles.timelineCard}>
+                                                <Pressable
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={
+                                                        seriesExpanded
+                                                            ? `Replier la série ${index + 1}`
+                                                            : `Déplier la série ${index + 1}`
+                                                    }
+                                                    onPress={() => toggleSeriesExpanded(seriesKey)}
+                                                    style={({ pressed }) => [
+                                                        styles.timelineCardHeader,
+                                                        pressed && styles.timelineCardHeaderPressed,
+                                                    ]}
+                                                >
+                                                    <View style={styles.timelineSeriesHeaderLeft}>
+                                                        <Text style={styles.timelineSeriesOverline}>{`Série ${index + 1}`}</Text>
+                                                        <Text style={styles.timelineSeriesTitle}>{`${segmentsCount} ${segmentsCount === 1 ? "bloc" : "blocs"}`}</Text>
+                                                    </View>
+                                                    <View style={styles.timelineCardHeaderRight}>
+                                                        {serie.enablePace ? (
+                                                            <View style={styles.timelineSeriesPill}>
+                                                                <MaterialCommunityIcons name="speedometer" size={14} color={UI_COLORS.accent} />
+                                                                <Text style={styles.timelineSeriesPillText}>Allure</Text>
+                                                            </View>
                                                         ) : null}
+                                                        {repeatCount > 1 ? (
+                                                            <View style={styles.seriesRepeatPill}>
+                                                                <Text style={styles.seriesRepeatValue}>×{repeatCount}</Text>
+                                                            </View>
+                                                        ) : null}
+                                                        <MaterialCommunityIcons
+                                                            name={seriesExpanded ? "chevron-up" : "chevron-down"}
+                                                            size={18}
+                                                            color={seriesExpanded ? UI_COLORS.accent : UI_COLORS.textMuted}
+                                                        />
+                                                    </View>
+                                                </Pressable>
+
+                                                {seriesExpanded ? (
+                                                    <>
+                                                        {serie.enablePace ? (
+                                                            <View style={styles.paceRow}>
+                                                                <View style={styles.paceChip}>
+                                                                    <Text style={styles.paceChipText}>
+                                                                        Intensité: {serie.pacePercent ?? "—"}%
+                                                                    </Text>
+                                                                </View>
+                                                                {referenceLabel ? (
+                                                                    <>
+                                                                        <View style={styles.paceChip}>
+                                                                            <Text style={styles.paceChipText}>Réf {referenceLabel}</Text>
+                                                                        </View>
+                                                                        {canShowPaceWarningButton ? (
+                                                                            <Pressable
+                                                                                onPress={() =>
+                                                                                    openPaceWarningPrompt(
+                                                                                        serie.paceReferenceDistance as PaceReferenceValue,
+                                                                                    )
+                                                                                }
+                                                                                accessibilityRole="button"
+                                                                                accessibilityLabel={`Compléter votre profil pour ${referenceLabel}`}
+                                                                                style={({ pressed }) => [
+                                                                                    styles.paceWarningButton,
+                                                                                    pressed && styles.paceWarningButtonPressed,
+                                                                                ]}
+                                                                                hitSlop={6}
+                                                                            >
+                                                                                <MaterialCommunityIcons
+                                                                                    name="alert-circle"
+                                                                                    size={16}
+                                                                                    color={UI_COLORS.danger}
+                                                                                />
+                                                                            </Pressable>
+                                                                        ) : null}
+                                                                    </>
+                                                                ) : null}
+                                                            </View>
+                                                        ) : null}
+
+                                                        <View style={styles.timelineSegments}>
+                                                            {(serie.segments || []).map((segment, segmentIndex) => {
+                                                                const blockType = resolveBlockType(segment);
+                                                                const blockLabel = getSegmentBlockLabel(segment);
+                                                                const isCustom = blockType === "custom";
+                                                                const blockIcon = BLOCK_TYPE_ICONS[blockType] || "run-fast";
+                                                                const blockAccent = BLOCK_TYPE_ACCENTS[blockType] || UI_COLORS.accent;
+                                                                const stripeColor = withAlpha(
+                                                                    blockAccent,
+                                                                    blockType === "start" ? 0.55 : 0.85,
+                                                                );
+                                                                const iconTint = withAlpha(blockAccent, 0.10);
+                                                                const iconBorder = withAlpha(blockAccent, 0.28);
+                                                                const pacePreview = serie.enablePace
+                                                                    ? getSegmentPacePreview(serie, segment)
+                                                                    : null;
+                                                                const repetitionLabel = (() => {
+                                                                    if (blockType === "start" && typeof segment.startCount === "number") {
+                                                                        const suffix = segment.startCount > 1 ? "s" : "";
+                                                                        return `${segment.startCount} départ${suffix}`;
+                                                                    }
+                                                                    const canShowRepetitions =
+                                                                        blockType === "vitesse" || blockType === "cotes" || blockType === "custom";
+                                                                    if (
+                                                                        canShowRepetitions &&
+                                                                        segment.repetitions &&
+                                                                        segment.repetitions > 1
+                                                                    ) {
+                                                                        return `×${segment.repetitions} fois`;
+                                                                    }
+                                                                    return null;
+                                                                })();
+
+                                                                return (
+                                                                    <View key={segment.id ?? segmentIndex} style={styles.timelineSegmentCard}>
+                                                                        <View
+                                                                            style={[
+                                                                                styles.timelineSegmentAccent,
+                                                                                { backgroundColor: stripeColor },
+                                                                            ]}
+                                                                        />
+                                                                        <View style={{ flex: 1 }}>
+                                                                            <View style={styles.timelineSegmentHeaderRow}>
+                                                                                <View style={styles.timelineSegmentHeaderLeft}>
+                                                                                    <View
+                                                                                        style={[
+                                                                                            styles.timelineSegmentIconBox,
+                                                                                            {
+                                                                                                backgroundColor: iconTint,
+                                                                                                borderColor: iconBorder,
+                                                                                            },
+                                                                                        ]}
+                                                                                    >
+                                                                                        <MaterialCommunityIcons
+                                                                                            name={blockIcon}
+                                                                                            size={14}
+                                                                                            color={blockAccent}
+                                                                                        />
+                                                                                    </View>
+                                                                                    <Text style={styles.timelineSegmentTitle}>{blockLabel}</Text>
+                                                                                </View>
+                                                                                {repetitionLabel ? (
+                                                                                    <Text style={styles.timelineSegmentMetaRight}>{repetitionLabel}</Text>
+                                                                                ) : null}
+                                                                            </View>
+                                                                            {isCustom
+                                                                                ? renderCustomSegmentDetails(segment)
+                                                                                : renderStandardSegmentDetails(segment, blockType)}
+                                                                            {pacePreview ? (
+                                                                                <View style={styles.segmentPacePreview}>
+                                                                                    <Text style={styles.segmentPacePreviewLabel}>
+                                                                                        {`${pacePreview.mode === "load" ? "Charge" : "Temps"} cible (${pacePreview.distanceLabel})`}
+                                                                                    </Text>
+                                                                                    <Text style={styles.segmentPacePreviewValue}>{pacePreview.value}</Text>
+                                                                                    <Text style={styles.segmentPacePreviewHint}>{pacePreview.detail}</Text>
+                                                                                </View>
+                                                                            ) : null}
+                                                                        </View>
+                                                                    </View>
+                                                                );
+                                                            })}
+                                                        </View>
                                                     </>
                                                 ) : null}
                                             </View>
-                                        ) : null}
-                                        <View style={styles.segmentList}>
-                                            {(serie.segments || []).map((segment, segmentIndex) => {
-                                                const blockType = resolveBlockType(segment);
-                                                const blockLabel = getSegmentBlockLabel(segment);
-                                                const isCustom = blockType === "custom";
-                                                const pacePreview = serie.enablePace
-                                                    ? getSegmentPacePreview(serie, segment)
-                                                    : null;
-                                                const repetitionLabel = (() => {
-                                                    if (blockType === "start" && typeof segment.startCount === "number") {
-                                                        const suffix = segment.startCount > 1 ? "s" : "";
-                                                        return `${segment.startCount} départ${suffix}`;
-                                                    }
-                                                    if (segment.repetitions) {
-                                                        return `×${segment.repetitions} fois`;
-                                                    }
-                                                    return null;
-                                                })();
-                                                return (
-                                                    <View key={segment.id ?? segmentIndex} style={[styles.segmentItem]}>
-                                                        <View style={styles.segmentItemRow}>
-                                                            <Text style={styles.segmentBadge}>
-                                                                Bloc {segmentIndex + 1}: {blockLabel}
-                                                            </Text>
-                                                            {repetitionLabel ? (
-                                                                <Text style={styles.segmentRepeat}>{repetitionLabel}</Text>
-                                                            ) : null}
-                                                        </View>
-                                                        {isCustom
-                                                            ? renderCustomSegmentDetails(segment)
-                                                            : renderStandardSegmentDetails(segment, blockType)}
-                                                        {pacePreview ? (
-                                                            <View style={styles.segmentPacePreview}>
-                                                                <Text style={styles.segmentPacePreviewLabel}>
-                                                                    {`${pacePreview.mode === "load" ? "Charge" : "Temps"} cible (${pacePreview.distanceLabel})`}
-                                                                </Text>
-                                                                <Text style={styles.segmentPacePreviewValue}>{pacePreview.value}</Text>
-                                                                <Text style={styles.segmentPacePreviewHint}>{pacePreview.detail}</Text>
-                                                            </View>
-                                                        ) : null}
-                                                    </View>
-                                                );
-                                            })}
                                         </View>
-                                    </View>
-                                );
-                            })}
-                        </View>
+                                    );
+                                })}
+                            </View>
+                        ) : null}
                     </View>
                 ) : null}
 
                 {/* NOTES */}
                 {session.coachNotes ? (
-                    <View style={styles.noteCard}>
-                        <Text style={styles.sectionHeading}>Notes coach</Text>
-                        <Text style={styles.noteBody}>{session.coachNotes}</Text>
+                    <View style={[styles.card, styles.noteCard]}>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={coachNotesExpanded ? "Replier les notes coach" : "Déplier les notes coach"}
+                            onPress={() => setCoachNotesExpanded((value) => !value)}
+                            style={({ pressed }) => [styles.accordionHeaderRow, coachNotesExpanded && styles.accordionHeaderRowActive, pressed && styles.accordionHeaderRowPressed]}
+                        >
+                            <Text style={styles.sectionHeading}>Notes coach</Text>
+                            <MaterialCommunityIcons
+                                name={coachNotesExpanded ? "chevron-up" : "chevron-down"}
+                                size={18}
+                                color={coachNotesExpanded ? UI_COLORS.accent : UI_COLORS.textMuted}
+                            />
+                        </Pressable>
+                        {coachNotesExpanded ? <Text style={styles.noteBody}>{session.coachNotes}</Text> : null}
                     </View>
                 ) : null}
 
                 {/* PARTICIPANTS */}
-                <View style={[styles.participantsCard]}>
+                <View style={[styles.card, styles.participantsCard]}>
                     <View style={styles.participantsHeader}>
-                        <Text style={styles.sectionHeading}>{participantCountLabel}</Text>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={participantsExpanded ? "Replier les participants" : "Déplier les participants"}
+                            onPress={() => setParticipantsExpanded((value) => !value)}
+                            style={({ pressed }) => [styles.participantsHeaderToggle, pressed && styles.participantsHeaderTogglePressed]}
+                        >
+                            <Text style={styles.sectionHeading}>{participantCountLabel}</Text>
+                            <MaterialCommunityIcons
+                                name={participantsExpanded ? "chevron-up" : "chevron-down"}
+                                size={18}
+                                color={participantsExpanded ? UI_COLORS.accent : UI_COLORS.textMuted}
+                            />
+                        </Pressable>
                         {isOwner && !sessionLocked ? (
                             <Pressable
                                 style={({ pressed }) => [
@@ -1472,7 +1826,7 @@ export default function TrainingSessionDetailScreen() {
                                 accessibilityRole="button"
                                 onPress={handleOpenParticipantDialog}
                             >
-                                <MaterialCommunityIcons name="account-plus" size={16} color="#010617" />
+                                <MaterialCommunityIcons name="account-plus" size={16} color={UI_COLORS.background} />
                                 <Text style={styles.participantsActionButtonLabel}>Ajouter</Text>
                             </Pressable>
                         ) : canJoin ? (
@@ -1487,10 +1841,10 @@ export default function TrainingSessionDetailScreen() {
                                 disabled={joinLoading || !currentUserId}
                             >
                                 {joinLoading ? (
-                                    <ActivityIndicator size="small" color="#010617" />
+                                    <ActivityIndicator size="small" color={UI_COLORS.background} />
                                 ) : (
                                     <>
-                                        <MaterialCommunityIcons name={joinButtonIcon} size={14} color="#010617" />
+                                        <MaterialCommunityIcons name={joinButtonIcon} size={14} color={UI_COLORS.background} />
                                         <Text
                                             style={styles.participantsJoinButtonLabel}
                                             numberOfLines={1}
@@ -1529,255 +1883,239 @@ export default function TrainingSessionDetailScreen() {
                             </Pressable>
                         ) : null}
                     </View>
-                    <Text style={styles.participantsHint}>{participantsDescription}</Text>
-                    {hasChronoEligibleParticipants ? (
-                        <View style={styles.chronoHeaderRow}>
-                            <Text style={styles.chronoHint}>
-                                {chronosVisible ? "Masquer les chronos" : "Afficher les chronos"}
-                            </Text>
-                            <Switch
-                                value={chronosVisible}
-                                onValueChange={setChronosVisible}
-                                color="#38bdf8"
-                                accessibilityRole="switch"
-                                accessibilityLabel={chronosVisible ? "Masquer les chronos" : "Afficher les chronos"}
-                            />
-                        </View>
-                    ) : null}
-                    <View style={styles.participantsList}>
-                        <Pressable
-                            style={({ pressed }) => [
-                                styles.participantRow,
-                                ownerRowInteractive && styles.participantRowInteractive,
-                                pressed && ownerRowInteractive && styles.participantRowPressed,
-                            ]}
-                            accessibilityRole={ownerRowInteractive ? "button" : undefined}
-                            onPress={ownerRowInteractive ? () => handleOpenUserProfile(sessionOwnerId) : undefined}
-                            disabled={!ownerRowInteractive}
-                        >
-                            {ownerPhotoUrl ? (
-                                <Avatar.Image
-                                    size={36}
-                                    source={{ uri: ownerPhotoUrl }}
-                                    style={[styles.participantAvatar, styles.participantAvatarImage]}
-                                />
-                            ) : (
-                                <Avatar.Text
-                                    size={36}
-                                    label={ownerInitials}
-                                    style={[styles.participantAvatar, { backgroundColor: ownerAvatarColor }]}
-                                    color="#010617"
-                                />
-                            )}
-                            <View style={styles.participantContent}>
-                                <View style={styles.participantMeta}>
-                                    <Text style={styles.participantName}>{ownerNameLabel}</Text>
-                                    <Text style={styles.participantAdded}>a créé la séance</Text>
+
+                    {participantsExpanded ? (
+                        <>
+                            <Text style={styles.participantsHint}>{participantsDescription}</Text>
+                            {hasChronoEligibleParticipants ? (
+                                <View style={styles.chronoHeaderRow}>
+                                    <Text style={styles.chronoHint}>
+                                        {chronosVisible ? "Masquer les chronos" : "Afficher les chronos"}
+                                    </Text>
+                                    <Switch
+                                        value={chronosVisible}
+                                        onValueChange={setChronosVisible}
+                                        color={UI_COLORS.accent}
+                                        accessibilityRole="switch"
+                                        accessibilityLabel={chronosVisible ? "Masquer les chronos" : "Afficher les chronos"}
+                                    />
                                 </View>
-                            </View>
-                        </Pressable>
-                        {!isCoachParticipantRef(sessionOwnerRef) ? renderChronoInputsForParticipant(sessionOwnerId) : null}
-                        {participants.length ? (
-                            participants.map((participant, index) => {
-                                const userRef = toParticipantRef(participant.user);
-                                const participantUserId = getUserIdFromRef(userRef);
-                                const participantKey = participantUserId || `participant-${index}`;
-                                const hideChronosForParticipant = isCoachParticipantRef(userRef);
-                                const isCurrent = Boolean(currentUserId && participantUserId && participantUserId === currentUserId);
-                                const displayName = getParticipantDisplayName(userRef);
-                                const avatarColor = getParticipantColor(participantUserId || String(index));
-                                const participantPhotoUrl = getProfilePhotoUri(userRef?.photoUrl);
-                                const normalizedStatus = normalizeParticipantStatus(
-                                    participant.status as ParticipantStatus | undefined
-                                );
-                                const confirmationDate = (() => {
-                                    if (normalizedStatus !== "confirmed") {
-                                        return null;
-                                    }
-                                    const source = participant.confirmedAt || participant.addedAt;
-                                    return source ? new Date(source) : null;
-                                })();
-                                const confirmationLabel = confirmationDate
-                                    ? confirmationDate.toLocaleTimeString("fr-FR", {
-                                        hour: "2-digit",
-                                        minute: "2-digit",
-                                    })
-                                    : null;
-                                const canRemoveParticipant = Boolean(
-                                    isOwner &&
-                                    participantUserId &&
-                                    participantUserId !== sessionOwnerId &&
-                                    !sessionLocked,
-                                );
-                                const isRemovingParticipant = Boolean(
-                                    participantUserId && removingParticipantIds[participantUserId],
-                                );
-                                return (
-                                    <View key={`${participantKey}-${index}`} style={styles.participantBlock}>
-                                        <Pressable
-                                            style={({ pressed }) => [
-                                                styles.participantRow,
-                                                participantUserId && styles.participantRowInteractive,
-                                                pressed && participantUserId && styles.participantRowPressed,
-                                            ]}
-                                            accessibilityRole={participantUserId ? "button" : undefined}
-                                            onPress={participantUserId ? () => handleOpenUserProfile(participantUserId) : undefined}
-                                            disabled={!participantUserId}
-                                        >
-                                            {participantPhotoUrl ? (
-                                                <Avatar.Image
-                                                    size={36}
-                                                    source={{ uri: participantPhotoUrl }}
-                                                    style={[styles.participantAvatar, styles.participantAvatarImage]}
-                                                />
-                                            ) : (
-                                                <Avatar.Text
-                                                    size={36}
-                                                    label={getInitialsFromLabel(displayName)}
-                                                    style={[styles.participantAvatar, { backgroundColor: avatarColor }]}
-                                                    color="#010617"
-                                                />
-                                            )}
-                                            <View style={styles.participantContent}>
-                                                <View style={styles.participantMeta}>
-                                                    <Text style={styles.participantName}>
-                                                        {displayName}
-                                                        {isCurrent ? " (vous)" : ""}
-                                                    </Text>
-                                                    <View style={styles.participantStatusRow}>
-                                                        <View
-                                                            style={[
-                                                                styles.participantStatusChip,
-                                                                normalizedStatus === "confirmed"
-                                                                    ? styles.participantStatusChipConfirmed
-                                                                    : styles.participantStatusChipPending,
-                                                            ]}
-                                                        >
-                                                            <Text style={styles.participantStatusChipText}>
-                                                                {formatParticipantStatusLabel(normalizedStatus)}
-                                                            </Text>
-                                                        </View>
-                                                        {confirmationLabel ? (
-                                                            <Text style={styles.participantAdded}>
-                                                                à {confirmationLabel}
-                                                            </Text>
-                                                        ) : null}
-                                                    </View>
-                                                </View>
-                                            </View>
-                                            {canRemoveParticipant && participantUserId ? (
+                            ) : null}
+                            <View style={styles.participantsList}>
+                                <Pressable
+                                    style={({ pressed }) => [
+                                        styles.participantRow,
+                                        ownerRowInteractive && styles.participantRowInteractive,
+                                        pressed && ownerRowInteractive && styles.participantRowPressed,
+                                    ]}
+                                    accessibilityRole={ownerRowInteractive ? "button" : undefined}
+                                    onPress={ownerRowInteractive ? () => handleOpenUserProfile(sessionOwnerId) : undefined}
+                                    disabled={!ownerRowInteractive}
+                                >
+                                    {ownerPhotoUrl ? (
+                                        <Avatar.Image
+                                            size={36}
+                                            source={{ uri: ownerPhotoUrl }}
+                                            style={[styles.participantAvatar, styles.participantAvatarImage]}
+                                        />
+                                    ) : (
+                                        <Avatar.Text
+                                            size={36}
+                                            label={ownerInitials}
+                                            style={[styles.participantAvatar, { backgroundColor: ownerAvatarColor }]}
+                                            color={UI_COLORS.background}
+                                        />
+                                    )}
+                                    <View style={styles.participantContent}>
+                                        <View style={styles.participantMeta}>
+                                            <Text style={styles.participantName}>{ownerNameLabel}</Text>
+                                            <Text style={styles.participantAdded}>a créé la séance</Text>
+                                        </View>
+                                    </View>
+                                </Pressable>
+                                {!isCoachParticipantRef(sessionOwnerRef) ? renderChronoInputsForParticipant(sessionOwnerId) : null}
+                                {participants.length ? (
+                                    participants.map((participant, index) => {
+                                        const userRef = toParticipantRef(participant.user);
+                                        const participantUserId = getUserIdFromRef(userRef);
+                                        const participantKey = participantUserId || `participant-${index}`;
+                                        const hideChronosForParticipant = isCoachParticipantRef(userRef);
+                                        const isCurrent = Boolean(
+                                            currentUserId && participantUserId && participantUserId === currentUserId,
+                                        );
+                                        const displayName = getParticipantDisplayName(userRef);
+                                        const avatarColor = getParticipantColor(participantUserId || String(index));
+                                        const participantPhotoUrl = getProfilePhotoUri(userRef?.photoUrl);
+                                        const normalizedStatus = normalizeParticipantStatus(
+                                            participant.status as ParticipantStatus | undefined,
+                                        );
+                                        const confirmationDate = (() => {
+                                            if (normalizedStatus !== "confirmed") {
+                                                return null;
+                                            }
+                                            const source = participant.confirmedAt || participant.addedAt;
+                                            return source ? new Date(source) : null;
+                                        })();
+                                        const confirmationLabel = confirmationDate
+                                            ? confirmationDate.toLocaleTimeString("fr-FR", {
+                                                hour: "2-digit",
+                                                minute: "2-digit",
+                                            })
+                                            : null;
+                                        const canRemoveParticipant = Boolean(
+                                            isOwner &&
+                                            participantUserId &&
+                                            participantUserId !== sessionOwnerId &&
+                                            !sessionLocked,
+                                        );
+                                        const isRemovingParticipant = Boolean(
+                                            participantUserId && removingParticipantIds[participantUserId],
+                                        );
+                                        return (
+                                            <View key={`${participantKey}-${index}`} style={styles.participantBlock}>
                                                 <Pressable
                                                     style={({ pressed }) => [
-                                                        styles.participantRemoveButton,
-                                                        pressed && styles.participantRemoveButtonPressed,
-                                                        isRemovingParticipant && styles.participantRemoveButtonDisabled,
+                                                        styles.participantRow,
+                                                        participantUserId && styles.participantRowInteractive,
+                                                        pressed && participantUserId && styles.participantRowPressed,
                                                     ]}
-                                                    accessibilityRole="button"
-                                                    onPress={(event) => {
-                                                        event.stopPropagation();
-                                                        confirmRemoveParticipant(participantUserId, displayName);
-                                                    }}
-                                                    disabled={isRemovingParticipant}
+                                                    accessibilityRole={participantUserId ? "button" : undefined}
+                                                    onPress={participantUserId ? () => handleOpenUserProfile(participantUserId) : undefined}
+                                                    disabled={!participantUserId}
                                                 >
-                                                    {isRemovingParticipant ? (
-                                                        <ActivityIndicator size="small" color="#fecaca" />
+                                                    {participantPhotoUrl ? (
+                                                        <Avatar.Image
+                                                            size={36}
+                                                            source={{ uri: participantPhotoUrl }}
+                                                            style={[styles.participantAvatar, styles.participantAvatarImage]}
+                                                        />
                                                     ) : (
-                                                        <MaterialCommunityIcons name="account-remove" size={16} color="#fca5a5" />
+                                                        <Avatar.Text
+                                                            size={36}
+                                                            label={getInitialsFromLabel(displayName)}
+                                                            style={[styles.participantAvatar, { backgroundColor: avatarColor }]}
+                                                            color={UI_COLORS.background}
+                                                        />
                                                     )}
+                                                    <View style={styles.participantContent}>
+                                                        <View style={styles.participantMeta}>
+                                                            <Text style={styles.participantName}>
+                                                                {displayName}
+                                                                {isCurrent ? " (vous)" : ""}
+                                                            </Text>
+                                                            <View style={styles.participantStatusRow}>
+                                                                <View
+                                                                    style={[
+                                                                        styles.participantStatusChip,
+                                                                        normalizedStatus === "confirmed"
+                                                                            ? styles.participantStatusChipConfirmed
+                                                                            : styles.participantStatusChipPending,
+                                                                    ]}
+                                                                >
+                                                                    <Text style={styles.participantStatusChipText}>
+                                                                        {formatParticipantStatusLabel(normalizedStatus)}
+                                                                    </Text>
+                                                                </View>
+                                                                {confirmationLabel ? (
+                                                                    <Text style={styles.participantAdded}>
+                                                                        à {confirmationLabel}
+                                                                    </Text>
+                                                                ) : null}
+                                                            </View>
+                                                        </View>
+                                                    </View>
+                                                    {canRemoveParticipant && participantUserId ? (
+                                                        <Pressable
+                                                            style={({ pressed }) => [
+                                                                styles.participantRemoveButton,
+                                                                pressed && styles.participantRemoveButtonPressed,
+                                                                isRemovingParticipant && styles.participantRemoveButtonDisabled,
+                                                            ]}
+                                                            accessibilityRole="button"
+                                                            onPress={(event) => {
+                                                                event.stopPropagation();
+                                                                confirmRemoveParticipant(participantUserId, displayName);
+                                                            }}
+                                                            disabled={isRemovingParticipant}
+                                                        >
+                                                            {isRemovingParticipant ? (
+                                                                <ActivityIndicator size="small" color="#fecaca" />
+                                                            ) : (
+                                                                <MaterialCommunityIcons name="account-remove" size={16} color="#fca5a5" />
+                                                            )}
+                                                        </Pressable>
+                                                    ) : null}
                                                 </Pressable>
-                                            ) : null}
-                                        </Pressable>
-                                        {!hideChronosForParticipant ? renderChronoInputsForParticipant(participantUserId) : null}
-                                    </View>
-                                );
-                            })
-                        ) : (
-                            <Text style={styles.participantsEmpty}>Aucun participant inscrit pour le moment.</Text>
-                        )}
-                    </View>
-                    {hasChronoEligibleParticipants && isOwner && chronosVisible ? (
-                        <View style={styles.chronoSaveBottomRow}>
-                            <Pressable
-                                style={({ pressed }) => [
-                                    styles.chronoSaveButton,
-                                    pressed && styles.chronoSaveButtonPressed,
-                                    (!canEditChronos || chronoSaving) && styles.chronoSaveButtonDisabled,
-                                ]}
-                                accessibilityRole="button"
-                                onPress={handleSaveChronos}
-                                disabled={!canEditChronos || chronoSaving}
-                            >
-                                {chronoSaving ? (
-                                    <ActivityIndicator size="small" color="#010617" />
+                                                {!hideChronosForParticipant
+                                                    ? renderChronoInputsForParticipant(participantUserId)
+                                                    : null}
+                                            </View>
+                                        );
+                                    })
                                 ) : (
-                                    <>
-                                        <MaterialCommunityIcons name="content-save" size={16} color="#010617" />
-                                        <Text style={styles.chronoSaveButtonLabel}>Enregistrer les chronos</Text>
-                                    </>
+                                    <Text style={styles.participantsEmpty}>Aucun participant inscrit pour le moment.</Text>
                                 )}
-                            </Pressable>
-                        </View>
+                            </View>
+                            {hasChronoEligibleParticipants && isOwner && chronosVisible ? (
+                                <View style={styles.chronoSaveBottomRow}>
+                                    <Pressable
+                                        style={({ pressed }) => [
+                                            styles.chronoSaveButton,
+                                            pressed && styles.chronoSaveButtonPressed,
+                                            (!canEditChronos || chronoSaving) && styles.chronoSaveButtonDisabled,
+                                        ]}
+                                        accessibilityRole="button"
+                                        onPress={handleSaveChronos}
+                                        disabled={!canEditChronos || chronoSaving}
+                                    >
+                                        {chronoSaving ? (
+                                            <ActivityIndicator size="small" color={UI_COLORS.background} />
+                                        ) : (
+                                            <>
+                                                <MaterialCommunityIcons
+                                                    name="content-save"
+                                                    size={16}
+                                                    color={UI_COLORS.background}
+                                                />
+                                                <Text style={styles.chronoSaveButtonLabel}>Enregistrer les chronos</Text>
+                                            </>
+                                        )}
+                                    </Pressable>
+                                </View>
+                            ) : null}
+                        </>
                     ) : null}
                 </View>
 
                 {session.athleteFeedback ? (
-                    <View style={styles.noteCard}>
-                        <Text style={styles.sectionHeading}>Feedback athlète</Text>
-                        <Text style={styles.noteBody}>{session.athleteFeedback}</Text>
+                    <View style={[styles.card, styles.noteCard]}>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={athleteFeedbackExpanded ? "Replier le feedback athlète" : "Déplier le feedback athlète"}
+                            onPress={() => setAthleteFeedbackExpanded((value) => !value)}
+                            style={({ pressed }) => [styles.accordionHeaderRow, athleteFeedbackExpanded && styles.accordionHeaderRowActive, pressed && styles.accordionHeaderRowPressed]}
+                        >
+                            <Text style={styles.sectionHeading}>Feedback athlète</Text>
+                            <MaterialCommunityIcons
+                                name={athleteFeedbackExpanded ? "chevron-up" : "chevron-down"}
+                                size={18}
+                                color={athleteFeedbackExpanded ? UI_COLORS.accent : UI_COLORS.textMuted}
+                            />
+                        </Pressable>
+                        {athleteFeedbackExpanded ? (
+                            <Text style={styles.noteBody}>{session.athleteFeedback}</Text>
+                        ) : null}
                     </View>
                 ) : null}
 
-                {isOwner ? (
-                    <View style={[styles.footerActions, { paddingBottom: footerPaddingBottom }]}>
-                        {!sessionLocked ? (
-                            <Button
-                                mode="contained"
-                                onPress={handleEditSession}
-                                style={styles.footerButton}
-                                buttonColor="#38bdf8"
-                                textColor="#02111f"
-                                icon="pencil"
-                            >
-                                Modifier la séance
-                            </Button>
-                        ) : (
-                            <View style={styles.sessionLockedBanner}>
-                                <MaterialCommunityIcons name="lock-outline" size={16} color="#f8fafc" />
-                                <Text style={styles.sessionLockedText}>
-                                    {lockReasonLabel
-                                        ? `Séance ${lockReasonLabel}. Modification impossible.`
-                                        : "Cette séance est clôturée. Modification impossible."}
-                                </Text>
-                            </View>
-                        )}
-                        <Button
-                            mode="outlined"
-                            onPress={handleSaveAsTemplate}
-                            style={styles.footerButton}
-                            textColor="#22d3ee"
-                            icon="bookmark-plus-outline"
-                            loading={templateSaving}
-                            disabled={templateSaving}
-                        >
-                            Enregistrer comme template
-                        </Button>
-                        <Button
-                            mode="contained"
-                            onPress={confirmDeleteSession}
-                            style={[styles.deleteButton, styles.footerButton]}
-                            buttonColor="#ef4444"
-                            textColor="#fff"
-                            icon="delete-outline"
-                            loading={deleteLoading}
-                            disabled={deleteLoading}
-                        >
-                            Supprimer la séance
-                        </Button>
-                    </View>
-                ) : null}
             </ScrollView>
             <Portal>
-                <Dialog visible={participantDialogVisible} onDismiss={closeParticipantDialog}>
+                <Dialog
+                    visible={participantDialogVisible}
+                    onDismiss={closeParticipantDialog}
+                    dismissable={false}
+                    style={styles.participantDialog}
+                >
                     <Dialog.Title>Ajouter un participant</Dialog.Title>
                     <Dialog.Content>
                         <TextInput
@@ -1787,20 +2125,36 @@ export default function TrainingSessionDetailScreen() {
                                 setParticipantInput(value);
                                 setSelectedParticipant(null);
                             }}
+                            left={<TextInput.Icon icon="magnify" color={UI_COLORS.textMuted} />}
+                            right={
+                                participantInput.trim().length
+                                    ? (
+                                        <TextInput.Icon
+                                            icon="close-circle"
+                                            color={UI_COLORS.textMuted}
+                                            onPress={() => {
+                                                setParticipantInput("");
+                                                setSelectedParticipant(null);
+                                                setParticipantSuggestions([]);
+                                            }}
+                                        />
+                                    )
+                                    : null
+                            }
                             autoCapitalize="none"
                             autoCorrect={false}
                             mode="outlined"
                             style={styles.dialogTextInput}
                             placeholder="Nom, pseudo ou identifiant"
                             returnKeyType="done"
-                            onSubmitEditing={handleAddParticipant}
+                            onSubmitEditing={() => Keyboard.dismiss()}
                             disabled={participantSaving}
                         />
                         {participantInput.trim().length >= 2 ? (
                             <View style={styles.participantSuggestionList}>
                                 {participantSearchLoading ? (
                                     <View style={styles.participantSuggestionLoading}>
-                                        <ActivityIndicator size="small" color="#22d3ee" />
+                                        <ActivityIndicator size="small" color={UI_COLORS.accent} />
                                     </View>
                                 ) : participantSuggestions.length ? (
                                     participantSuggestions.map((suggestion, index) => {
@@ -1812,8 +2166,9 @@ export default function TrainingSessionDetailScreen() {
                                         return (
                                             <Pressable
                                                 key={suggestion.id}
-                                                style={[
+                                                style={({ pressed }) => [
                                                     styles.participantSuggestionRow,
+                                                    pressed && styles.participantSuggestionRowPressed,
                                                     index === participantSuggestions.length - 1 && styles.participantSuggestionRowLast,
                                                     isSelected && styles.participantSuggestionRowSelected,
                                                 ]}
@@ -1826,7 +2181,7 @@ export default function TrainingSessionDetailScreen() {
                                                         size={32}
                                                         label={getInitialsFromLabel(displayName)}
                                                         style={[styles.participantSuggestionAvatar, { backgroundColor: getParticipantColor(suggestion.id) }]}
-                                                        color="#010617"
+                                                        color={UI_COLORS.background}
                                                     />
                                                 )}
                                                 <View style={{ flex: 1 }}>
@@ -1836,7 +2191,7 @@ export default function TrainingSessionDetailScreen() {
                                                     ) : null}
                                                 </View>
                                                 {isSelected ? (
-                                                    <MaterialCommunityIcons name="check-circle" size={18} color="#22d3ee" />
+                                                    <MaterialCommunityIcons name="check-circle" size={18} color={UI_COLORS.accent} />
                                                 ) : null}
                                             </Pressable>
                                         );
@@ -1851,14 +2206,20 @@ export default function TrainingSessionDetailScreen() {
                         <Text style={styles.dialogHint}>L&apos;athlète peut trouver son identifiant dans son profil.</Text>
                     </Dialog.Content>
                     <Dialog.Actions>
-                        <Button onPress={closeParticipantDialog} disabled={participantSaving} textColor="#94a3b8">
+                        <Button
+                            onPress={closeParticipantDialog}
+                            disabled={participantSaving}
+                            textColor={UI_COLORS.textMuted}
+                        >
                             Annuler
                         </Button>
                         <Button
+                            mode="contained"
+                            buttonColor={UI_COLORS.accent}
                             onPress={handleAddParticipant}
                             loading={participantSaving}
                             disabled={!participantInput.trim() || participantSaving}
-                            textColor="#22d3ee"
+                            textColor={UI_COLORS.background}
                         >
                             Ajouter
                         </Button>
@@ -1904,7 +2265,7 @@ export default function TrainingSessionDetailScreen() {
                             onPress={handleSubmitPaceWarning}
                             loading={paceWarningSaving}
                             disabled={paceWarningSaving}
-                            textColor="#22d3ee"
+                            textColor={UI_COLORS.accent}
                         >
                             Enregistrer
                         </Button>
@@ -1916,6 +2277,385 @@ export default function TrainingSessionDetailScreen() {
 }
 
 const styles = StyleSheet.create({
+    card: {
+        borderRadius: 14,
+        padding: 9,
+        backgroundColor: UI_COLORS.surface,
+        borderWidth: 1,
+        borderColor: UI_COLORS.border,
+    },
+    summaryCard: {
+        padding: 14,
+        gap: 12,
+    },
+    summaryTopRow: {
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 12,
+    },
+    dateBadge: {
+        width: 48,
+        borderRadius: 16,
+        paddingVertical: 10,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: UI_COLORS.surfaceMuted,
+        borderWidth: 1,
+        borderColor: UI_COLORS.borderStrong,
+    },
+    dateBadgeDay: {
+        color: UI_COLORS.text,
+        fontSize: 14,
+        fontWeight: "800",
+        letterSpacing: 0.4,
+    },
+    dateBadgeMonth: {
+        color: UI_COLORS.textMuted,
+        fontSize: 11,
+        fontWeight: "800",
+        letterSpacing: 1.1,
+        marginTop: 2,
+    },
+    summaryHeaderRow: {
+        flexDirection: "row",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 10,
+    },
+    summaryTitle: {
+        flex: 1,
+        color: UI_COLORS.text,
+        fontSize: 16,
+        fontWeight: "900",
+        letterSpacing: 0.2,
+        lineHeight: 24,
+    },
+    summaryTypeRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    summarySubtitle: {
+        color: UI_COLORS.textMuted,
+        fontSize: 12,
+        fontWeight: "700",
+        letterSpacing: 0.3,
+    },
+    summaryDivider: {
+        height: 1,
+        backgroundColor: "rgba(148,163,184,0.16)",
+    },
+    metaGrid: {
+        flexDirection: "row",
+        gap: 10,
+    },
+    metaColumn: {
+        gap: 10,
+    },
+    metaColumnWide: {
+        flex: 1.5,
+    },
+    metaColumnNarrow: {
+        flex: 0.75,
+    },
+    metaItem: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        borderRadius: 14,
+        paddingVertical: 10,
+        paddingHorizontal: 5,
+        backgroundColor: UI_COLORS.surfaceMuted,
+        borderWidth: 1,
+        borderColor: "rgba(148,163,184,0.18)",
+    },
+    metaItemIcon: {
+        width: 24,
+        height: 24,
+        borderRadius: 8,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(34,211,238,0.08)",
+        borderWidth: 1,
+        borderColor: "rgba(34,211,238,0.22)",
+    },
+    metaGridLabel: {
+        color: UI_COLORS.textMuted,
+        fontSize: 10,
+        fontWeight: "800",
+        letterSpacing: 0.6,
+        textTransform: "uppercase",
+    },
+    metaGridValue: {
+        color: UI_COLORS.text,
+        fontSize: 11,
+        fontWeight: "800",
+        marginTop: 2,
+    },
+    metaPill: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        backgroundColor: UI_COLORS.surfaceChip,
+        borderWidth: 1,
+        borderColor: UI_COLORS.border,
+        maxWidth: "100%",
+    },
+    metaPillText: {
+        color: UI_COLORS.text,
+        fontSize: 11,
+        fontWeight: "700",
+    },
+    summaryDescription: {
+        color: UI_COLORS.textMuted,
+        lineHeight: 18,
+        fontStyle: "italic"
+    },
+    statsCard: {
+        padding: 14,
+        gap: 12,
+    },
+    timelineContainer: {
+        padding: 14,
+        gap: 12,
+    },
+    sectionTopRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+    sectionTitleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    sectionToggle: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: UI_COLORS.border,
+        backgroundColor: UI_COLORS.surfaceChip,
+    },
+    sectionTogglePressed: {
+        opacity: 0.9,
+    },
+    sectionToggleText: {
+        color: UI_COLORS.text,
+        fontSize: 11,
+        fontWeight: "800",
+    },
+    statTilesGrid: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 10,
+    },
+    statTile: {
+        width: "48%",
+        borderRadius: 14,
+        paddingVertical: 5,
+        paddingHorizontal: 12,
+        backgroundColor: UI_COLORS.surfaceMuted,
+        borderWidth: 1,
+        borderColor: UI_COLORS.border,
+        gap: 4,
+    },
+    statTileValue: {
+        color: UI_COLORS.text,
+        fontSize: 12,
+        fontWeight: "900",
+        letterSpacing: 0.3,
+    },
+    statTileLabel: {
+        color: UI_COLORS.textMuted,
+        fontSize: 10,
+        fontWeight: "700",
+    },
+    timelineList: {
+        gap: 14,
+    },
+    timelineItem: {
+        flexDirection: "row",
+        gap: 12,
+    },
+    timelineItemNoGutter: {
+        gap: 0,
+    },
+    timelineCard: {
+        flex: 1,
+        borderRadius: 16,
+        paddingVertical: 12,
+        paddingHorizontal: 12,
+        backgroundColor: UI_COLORS.surfaceMuted,
+        borderWidth: 1,
+        borderColor: UI_COLORS.border,
+        borderLeftWidth: 3,
+        borderLeftColor: withAlpha(UI_COLORS.accent, 0.3),
+        gap: 10,
+    },
+    timelineCardHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+    },
+    timelineCardHeaderPressed: {
+        opacity: 0.9,
+    },
+    timelineCardHeaderRight: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    timelineSeriesHeaderLeft: {
+        flex: 1,
+        gap: 3,
+    },
+    timelineSeriesOverline: {
+        color: UI_COLORS.textMuted,
+        fontSize: 10,
+        fontWeight: "900",
+        letterSpacing: 1.1,
+        textTransform: "uppercase",
+    },
+    timelineSeriesTitle: {
+        color: UI_COLORS.text,
+        fontSize: 14,
+        fontWeight: "900",
+        letterSpacing: 0.3,
+    },
+    timelineSeriesPill: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        borderRadius: 999,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderWidth: 1,
+        borderColor: withAlpha(UI_COLORS.accent, 0.22),
+        backgroundColor: withAlpha(UI_COLORS.accent, 0.06),
+    },
+    timelineSeriesPillText: {
+        color: UI_COLORS.text,
+        fontSize: 11,
+        fontWeight: "900",
+        letterSpacing: 0.2,
+    },
+    timelineCardTitle: {
+        color: UI_COLORS.text,
+        fontSize: 13,
+        fontWeight: "900",
+        letterSpacing: 0.3,
+    },
+    timelineCardSubtitle: {
+        color: UI_COLORS.textMuted,
+        fontSize: 11,
+        fontWeight: "700",
+    },
+    timelineSegments: {
+        gap: 10,
+    },
+    timelineSegmentCard: {
+        flexDirection: "row",
+        gap: 10,
+        padding: 12,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: UI_COLORS.border,
+        backgroundColor: withAlpha(UI_COLORS.background, 0.55),
+    },
+    timelineSegmentAccent: {
+        width: 3,
+        borderRadius: 999,
+        backgroundColor: withAlpha(UI_COLORS.accent, 0.55),
+    },
+    timelineSegmentHeaderRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+        marginBottom: 6,
+    },
+    timelineSegmentHeaderLeft: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        flex: 1,
+    },
+    timelineSegmentIconBox: {
+        width: 28,
+        height: 28,
+        borderRadius: 12,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: UI_COLORS.surfaceChip,
+        borderWidth: 1,
+        borderColor: UI_COLORS.border,
+    },
+    timelineSegmentTitle: {
+        color: UI_COLORS.text,
+        fontSize: 12,
+        fontWeight: "900",
+        letterSpacing: 0.2,
+        flexShrink: 1,
+    },
+    timelineSegmentMetaRight: {
+        color: UI_COLORS.textMuted,
+        fontSize: 11,
+        fontWeight: "900",
+        letterSpacing: 0.2,
+    },
+    accordionHeaderRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingVertical: 4,
+        paddingHorizontal: 2,
+        borderRadius: 10,
+    },
+    accordionHeaderRowActive: {
+        backgroundColor: "rgba(34,211,238,0.06)",
+        borderWidth: 1,
+        borderColor: "rgba(34,211,238,0.22)",
+        paddingHorizontal: 8,
+    },
+    accordionHeaderRowPressed: {
+        opacity: 0.9,
+    },
+    participantsHeaderToggle: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        flexShrink: 1,
+        paddingVertical: 4,
+        paddingHorizontal: 2,
+        borderRadius: 10,
+    },
+    participantsHeaderTogglePressed: {
+        opacity: 0.9,
+    },
+    seriesHeaderPressable: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+        paddingVertical: 2,
+    },
+    seriesHeaderPressablePressed: {
+        opacity: 0.9,
+    },
+    seriesHeaderRight: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
     equipmentListRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -1923,14 +2663,14 @@ const styles = StyleSheet.create({
         marginLeft: 8,
     },
     equipmentChip: {
-        backgroundColor: 'rgba(250,204,21,0.10)',
-        borderColor: '#facc15',
+        backgroundColor: 'rgba(34,211,238,0.10)',
+        borderColor: 'rgba(34,211,238,0.35)',
         borderWidth: 1,
         borderRadius: 999,
-        paddingHorizontal: 10,
-        paddingVertical: 3,
-        color: '#facc15',
-        fontSize: 12,
+        paddingHorizontal: 9,
+        paddingVertical: 2,
+        color: UI_COLORS.text,
+        fontSize: 11,
         marginBottom: 4,
     },
     heroHeaderRow: {
@@ -1947,6 +2687,47 @@ const styles = StyleSheet.create({
         marginBottom: 6,
         gap: 12,
     },
+    topActionsBar: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        backgroundColor: UI_COLORS.background,
+        borderBottomWidth: 1,
+        borderBottomColor: "rgba(148,163,184,0.12)",
+    },
+    heroActionButton: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        minHeight: 30,
+        backgroundColor: UI_COLORS.accent,
+    },
+    heroActionButtonDanger: {
+        backgroundColor: "rgba(248,113,113,0.12)",
+        borderWidth: 1,
+        borderColor: "rgba(248,113,113,0.45)",
+    },
+    heroActionButtonPressed: {
+        opacity: 0.9,
+    },
+    heroActionButtonDisabled: {
+        opacity: 0.55,
+    },
+    heroActionButtonLabel: {
+        color: UI_COLORS.background,
+        fontSize: 10,
+        fontWeight: "800",
+        letterSpacing: 0.4,
+    },
+    heroActionButtonLabelDanger: {
+        color: UI_COLORS.danger,
+    },
     heroHeaderItemRow: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -1954,65 +2735,91 @@ const styles = StyleSheet.create({
         marginBottom: 1,
     },
     heroHeaderDate: {
-        color: '#22d3ee',
-        fontSize: 11,
+        color: UI_COLORS.accent,
+        fontSize: 10,
         fontWeight: '600',
     },
     heroHeaderPlace: {
-        color: '#e6e6e3ff',
+        color: UI_COLORS.textMuted,
         fontSize: 10,
         fontWeight: '500',
     },
     heroHeaderType: {
-        color: '#38bdf8',
-        fontSize: 11,
+        color: UI_COLORS.text,
+        fontSize: 10,
         fontWeight: '600',
         textAlign: 'right',
     },
     heroHeaderStatus: {
-        color: '#10b981',
+        color: UI_COLORS.textMuted,
         fontSize: 10,
         fontWeight: '500',
         textAlign: 'right',
     },
+    statusPill: {
+        flexDirection: "row",
+        alignItems: "center",
+        alignSelf: "flex-end",
+        gap: 6,
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        backgroundColor: UI_COLORS.surfaceChip,
+        borderWidth: 1,
+        borderColor: UI_COLORS.border,
+        marginTop: 2,
+    },
+    statusPillAccent: {
+        borderColor: "rgba(34,211,238,0.35)",
+        backgroundColor: "rgba(34,211,238,0.08)",
+    },
+    statusPillDanger: {
+        borderColor: "rgba(248,113,113,0.35)",
+        backgroundColor: "rgba(248,113,113,0.10)",
+    },
+    statusPillText: {
+        fontSize: 10,
+        fontWeight: "700",
+        color: UI_COLORS.text,
+    },
     safeArea: {
         flex: 1,
-        backgroundColor: "#010617",
+        backgroundColor: UI_COLORS.background,
     },
     container: {
-        paddingHorizontal: 20,
-        paddingVertical: 28,
+        paddingHorizontal: 14,
+        paddingVertical: 16,
         flexGrow: 1,
-        gap: 20,
-        backgroundColor: "#010617",
+        gap: 12,
+        backgroundColor: UI_COLORS.background,
     },
     heroCard: {
-        borderRadius: 18,
-        padding: 12,
-        backgroundColor: "rgba(2,6,23,0.92)",
+        borderRadius: 16,
+        padding: 10,
+        backgroundColor: UI_COLORS.surface,
         borderWidth: 1,
-        borderColor: "rgba(66, 81, 79, 0.35)",
-        shadowColor: "#0891b2",
-        shadowOpacity: 0.25,
-        shadowRadius: 12,
+        borderColor: UI_COLORS.border,
+        shadowColor: "#000000",
+        shadowOpacity: 0.12,
+        shadowRadius: 10,
         shadowOffset: { width: 0, height: 8 },
-        gap: 4,
+        gap: 3,
     },
     heroOverline: {
         fontSize: 10,
         letterSpacing: 1.2,
         textTransform: "uppercase",
-        color: "#67e8f9",
+        color: UI_COLORS.textMuted,
     },
     heroTitle: {
-        fontSize: 18,
+        fontSize: 16,
         fontWeight: "700",
-        color: "#f8fafc",
+        color: UI_COLORS.text,
     },
     heroSubtitle: {
         color: "#cbd5e1",
         lineHeight: 16,
-        fontSize: 12,
+        fontSize: 11,
     },
     heroMetaRow: {
         flexDirection: "row",
@@ -2046,18 +2853,18 @@ const styles = StyleSheet.create({
     },
     metricsCard: {
         borderRadius: 14,
-        padding: 8,
-        backgroundColor: "rgba(4,9,24,0.9)",
+        padding: 7,
+        backgroundColor: UI_COLORS.surfaceMuted,
         borderWidth: 1,
-        borderColor: "rgba(148,163,184,0.25)",
-        gap: 7,
+        borderColor: UI_COLORS.border,
+        gap: 6,
     },
     participantsCard: {
         borderRadius: 14,
-        padding: 10,
-        backgroundColor: "rgba(4,10,26,0.95)",
+        padding: 9,
+        backgroundColor: UI_COLORS.surfaceMuted,
         borderWidth: 1,
-        borderColor: "rgba(34,211,238,0.3)",
+        borderColor: UI_COLORS.border,
         gap: 6,
     },
     participantsHeader: {
@@ -2071,21 +2878,16 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 6,
         borderRadius: 999,
-        backgroundColor: "#38bdf8",
-        paddingHorizontal: 14,
-        paddingVertical: 6,
-        minHeight: 34,
-        shadowColor: "#38bdf8",
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 3 },
-        elevation: 5,
+        backgroundColor: UI_COLORS.accent,
+        paddingHorizontal: 12,
+        paddingVertical: 5,
+        minHeight: 32,
     },
     participantsActionButtonPressed: {
         opacity: 0.9,
     },
     participantsActionButtonLabel: {
-        color: "#010617",
+        color: UI_COLORS.background,
         fontSize: 10,
         fontWeight: "700",
         letterSpacing: 0.4,
@@ -2094,38 +2896,45 @@ const styles = StyleSheet.create({
         marginTop: 12,
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: "rgba(148,163,184,0.3)",
-        backgroundColor: "rgba(2,6,23,0.9)",
+        borderColor: UI_COLORS.border,
+        backgroundColor: UI_COLORS.surface,
         overflow: "hidden",
+        maxHeight: 240,
     },
     participantSuggestionRow: {
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
-        paddingHorizontal: 10,
-        paddingVertical: 8,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
         borderBottomWidth: 1,
-        borderBottomColor: "rgba(15,23,42,0.5)",
+        borderBottomColor: withAlpha(UI_COLORS.border, 0.6),
+        backgroundColor: UI_COLORS.surface,
+    },
+    participantSuggestionRowPressed: {
+        backgroundColor: withAlpha(UI_COLORS.accent, 0.06),
     },
     participantSuggestionRowLast: {
         borderBottomWidth: 0,
     },
     participantSuggestionRowSelected: {
-        backgroundColor: "rgba(34,211,238,0.08)",
+        backgroundColor: withAlpha(UI_COLORS.accent, 0.08),
+        borderLeftWidth: 3,
+        borderLeftColor: withAlpha(UI_COLORS.accent, 0.75),
     },
     participantSuggestionName: {
-        color: "#f8fafc",
+        color: UI_COLORS.text,
         fontSize: 13,
-        fontWeight: "600",
+        fontWeight: "800",
     },
     participantSuggestionHandle: {
-        color: "#94a3b8",
+        color: UI_COLORS.textMuted,
         fontSize: 11,
     },
     participantSuggestionEmpty: {
         paddingHorizontal: 12,
         paddingVertical: 10,
-        color: "#94a3b8",
+        color: UI_COLORS.textMuted,
         fontSize: 12,
         textAlign: "center",
     },
@@ -2136,26 +2945,21 @@ const styles = StyleSheet.create({
     },
     participantSuggestionHint: {
         marginTop: 12,
-        color: "#94a3b8",
+        color: UI_COLORS.textMuted,
         fontSize: 12,
     },
     participantSuggestionAvatar: {
-        backgroundColor: "rgba(34,211,238,0.2)",
+        backgroundColor: withAlpha(UI_COLORS.accent, 0.2),
     },
     participantsJoinButton: {
         flexDirection: "row",
         alignItems: "center",
         gap: 5,
         borderRadius: 999,
-        backgroundColor: "#22d3ee",
+        backgroundColor: UI_COLORS.accent,
         paddingHorizontal: 12,
         paddingVertical: 4,
         minHeight: 30,
-        shadowColor: "#22d3ee",
-        shadowOpacity: 0.35,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 3 },
-        elevation: 6,
     },
     participantsJoinButtonPressed: {
         opacity: 0.9,
@@ -2164,7 +2968,7 @@ const styles = StyleSheet.create({
         opacity: 0.55,
     },
     participantsJoinButtonLabel: {
-        color: "#010617",
+        color: UI_COLORS.background,
         fontSize: 10,
         fontWeight: "700",
         letterSpacing: 0.4,
@@ -2214,12 +3018,12 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
-        backgroundColor: "#38bdf8",
+        backgroundColor: UI_COLORS.accent,
         paddingHorizontal: 12,
-        paddingVertical: 8,
+        paddingVertical: 7,
         borderRadius: 12,
         borderWidth: 1,
-        borderColor: "rgba(56,189,248,0.35)",
+        borderColor: "rgba(34,211,238,0.35)",
     },
     chronoSaveButtonPressed: {
         opacity: 0.9,
@@ -2228,7 +3032,7 @@ const styles = StyleSheet.create({
         opacity: 0.55,
     },
     chronoSaveButtonLabel: {
-        color: "#010617",
+        color: UI_COLORS.background,
         fontWeight: "700",
         fontSize: 12,
     },
@@ -2261,7 +3065,7 @@ const styles = StyleSheet.create({
         backgroundColor: "rgba(15,23,42,0.45)",
     },
     participantAvatar: {
-        backgroundColor: "#1d4ed8",
+        backgroundColor: "rgba(34,211,238,0.22)",
     },
     participantAvatarImage: {
         backgroundColor: "rgba(2,6,23,0.4)",
@@ -2311,12 +3115,12 @@ const styles = StyleSheet.create({
         borderWidth: 1,
     },
     participantStatusChipConfirmed: {
-        backgroundColor: "rgba(16,185,129,0.15)",
-        borderColor: "rgba(16,185,129,0.4)",
+        backgroundColor: "rgba(34,211,238,0.10)",
+        borderColor: "rgba(34,211,238,0.32)",
     },
     participantStatusChipPending: {
-        backgroundColor: "rgba(249,115,22,0.15)",
-        borderColor: "rgba(249,115,22,0.4)",
+        backgroundColor: "rgba(15,23,42,0.6)",
+        borderColor: UI_COLORS.border,
     },
     participantChronoList: {
         gap: 2,
@@ -2367,41 +3171,42 @@ const styles = StyleSheet.create({
         paddingVertical: 4,
     },
     sectionHeading: {
-        fontSize: 13,
-        fontWeight: "600",
-        color: "#f8fafc",
+        fontSize: 12,
+        fontWeight: "700",
+        letterSpacing: 0.2,
+        color: UI_COLORS.text,
     },
     metricsGrid: {
         flexDirection: "row",
         flexWrap: "wrap",
-        gap: 6,
+        gap: 5,
     },
     metricItem: {
         flexGrow: 1,
         minWidth: 70,
         padding: 6,
         borderRadius: 8,
-        backgroundColor: "rgba(15,23,42,0.65)",
+        backgroundColor: UI_COLORS.surfaceChip,
         borderWidth: 1,
-        borderColor: "rgba(148,163,184,0.2)",
+        borderColor: UI_COLORS.border,
         gap: 2,
     },
     metricValue: {
         fontSize: 14,
         fontWeight: "700",
-        color: "#22d3ee",
+        color: UI_COLORS.text,
     },
     metricLabel: {
-        color: "#94a3b8",
+        color: UI_COLORS.textMuted,
         fontSize: 10,
     },
     blockCard: {
         borderRadius: 14,
-        padding: 8,
-        backgroundColor: "rgba(2,6,23,0.85)",
+        padding: 7,
+        backgroundColor: UI_COLORS.surfaceMuted,
         borderWidth: 1,
-        borderColor: "rgba(34,211,238,0.25)",
-        gap: 7,
+        borderColor: UI_COLORS.border,
+        gap: 6,
     },
     blockHeader: {
         flexDirection: "row",
@@ -2414,14 +3219,14 @@ const styles = StyleSheet.create({
         fontSize: 10,
     },
     seriesList: {
-        gap: 6,
+        gap: 5,
     },
     seriesCard: {
         borderRadius: 10,
-        padding: 6,
+        padding: 5,
         backgroundColor: "rgba(3,7,18,0.7)",
         borderWidth: 1,
-        borderColor: "rgba(148,163,184,0.2)",
+        borderColor: UI_COLORS.border,
         gap: 4,
     },
     seriesHeader: {
@@ -2442,22 +3247,22 @@ const styles = StyleSheet.create({
         marginTop: 1,
     },
     seriesRepeatPill: {
-        backgroundColor: "rgba(14,165,233,0.15)",
+        backgroundColor: "rgba(15,23,42,0.6)",
         borderRadius: 999,
         paddingHorizontal: 8,
-        paddingVertical: 4,
+        paddingVertical: 3,
         borderWidth: 1,
-        borderColor: "rgba(14,165,233,0.4)",
+        borderColor: UI_COLORS.border,
         alignItems: "center",
     },
     seriesRepeatValue: {
         fontSize: 11,
         fontWeight: "700",
-        color: "#38bdf8",
+        color: UI_COLORS.text,
     },
     seriesRepeatHint: {
         fontSize: 9,
-        color: "#bae6fd",
+        color: UI_COLORS.textMuted,
     },
     paceRow: {
         flexDirection: "row",
@@ -2468,20 +3273,20 @@ const styles = StyleSheet.create({
     paceChip: {
         flexDirection: "row",
         alignItems: "center",
-        backgroundColor: "rgba(8,145,178,0.18)",
+        backgroundColor: "rgba(15,23,42,0.6)",
         borderRadius: 999,
-        paddingHorizontal: 8,
-        paddingVertical: 3,
+        paddingHorizontal: 7,
+        paddingVertical: 2,
         marginRight: 6,
         marginBottom: 6,
         borderWidth: 1,
-        borderColor: "rgba(8,145,178,0.35)",
+        borderColor: UI_COLORS.border,
         gap: 4,
     },
     paceChipText: {
-        color: "#67e8f9",
+        color: UI_COLORS.text,
         fontWeight: "600",
-        fontSize: 11,
+        fontSize: 10,
     },
     paceWarningButton: {
         width: 20,
@@ -2499,14 +3304,14 @@ const styles = StyleSheet.create({
         opacity: 0.85,
     },
     segmentList: {
-        gap: 4,
+        gap: 3,
     },
     segmentItem: {
-        padding: 6,
+        padding: 5,
         borderRadius: 8,
         backgroundColor: "rgba(2,8,23,0.8)",
         borderWidth: 1,
-        borderColor: "rgba(71,85,105,0.45)",
+        borderColor: UI_COLORS.border,
         gap: 3,
     },
     segmentItemRow: {
@@ -2520,9 +3325,9 @@ const styles = StyleSheet.create({
         letterSpacing: 0.3,
     },
     segmentRepeat: {
-        color: "#fbbf24",
+        color: UI_COLORS.textMuted,
         fontWeight: "700",
-        fontSize: 11,
+        fontSize: 10,
     },
     segmentTitleRow: {
         flexDirection: "row",
@@ -2535,9 +3340,9 @@ const styles = StyleSheet.create({
         paddingVertical: 2,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: "rgba(34,211,238,0.45)",
-        backgroundColor: "rgba(34,211,238,0.15)",
-        color: "#67e8f9",
+        borderColor: UI_COLORS.border,
+        backgroundColor: UI_COLORS.surfaceChip,
+        color: UI_COLORS.text,
         fontSize: 10,
         fontWeight: "600",
     },
@@ -2546,9 +3351,9 @@ const styles = StyleSheet.create({
         paddingVertical: 2,
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: "rgba(34,211,238,0.45)",
-        backgroundColor: "rgba(34,211,238,0.15)",
-        color: "#67e8f9",
+        borderColor: UI_COLORS.border,
+        backgroundColor: UI_COLORS.surfaceChip,
+        color: UI_COLORS.text,
         fontSize: 10,
         fontWeight: "600",
     },
@@ -2562,18 +3367,18 @@ const styles = StyleSheet.create({
         flexWrap: "wrap",
     },
     segmentMetaChip: {
-        backgroundColor: "rgba(34,197,94,0.15)",
+        backgroundColor: "rgba(15,23,42,0.6)",
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: "rgba(34,197,94,0.4)",
-        paddingHorizontal: 8,
+        borderColor: UI_COLORS.border,
+        paddingHorizontal: 7,
         paddingVertical: 2,
         marginRight: 6,
         marginBottom: 6,
     },
     segmentMetaChipText: {
-        color: "#dcfce7",
-        fontSize: 11,
+        color: UI_COLORS.text,
+        fontSize: 10,
         fontWeight: "600",
     },
     segmentPacePreview: {
@@ -2582,11 +3387,11 @@ const styles = StyleSheet.create({
         borderRadius: 10,
         backgroundColor: "rgba(8,25,43,0.85)",
         borderWidth: 1,
-        borderColor: "rgba(56,189,248,0.35)",
+        borderColor: UI_COLORS.border,
         gap: 2,
     },
     segmentPacePreviewLabel: {
-        color: "#67e8f9",
+        color: UI_COLORS.textMuted,
         fontSize: 10,
         letterSpacing: 0.4,
         textTransform: "uppercase",
@@ -2597,21 +3402,21 @@ const styles = StyleSheet.create({
         fontWeight: "700",
     },
     segmentPacePreviewHint: {
-        color: "#94a3b8",
+        color: UI_COLORS.textMuted,
         fontSize: 11,
     },
     segmentGoal: {
         fontSize: 11,
         fontWeight: "600",
-        color: "#bed0e2ff",
+        color: UI_COLORS.text,
     },
     segmentGoalMuted: {
         fontSize: 11,
         fontWeight: "500",
-        color: "#cbd5f5",
+        color: UI_COLORS.textMuted,
     },
     segmentNote: {
-        color: "#94a3b8",
+        color: UI_COLORS.textMuted,
         lineHeight: 14,
         fontSize: 10,
     },
@@ -2622,6 +3427,8 @@ const styles = StyleSheet.create({
     segmentExtraChip: {
         backgroundColor: "rgba(15,23,42,0.7)",
         borderRadius: 999,
+        borderWidth: 1,
+        borderColor: UI_COLORS.border,
         paddingHorizontal: 7,
         paddingVertical: 2,
         marginRight: 6,
@@ -2635,7 +3442,7 @@ const styles = StyleSheet.create({
     noteCard: {
         borderRadius: 12,
         padding: 8,
-        backgroundColor: "rgba(15,23,42,0.85)",
+        backgroundColor: UI_COLORS.surfaceMuted,
         borderWidth: 1,
         borderColor: "rgba(148,163,184,0.25)",
         gap: 3,
@@ -2695,13 +3502,20 @@ const styles = StyleSheet.create({
         textAlign: "center",
         fontSize: 12,
     },
+    participantDialog: {
+        backgroundColor: UI_COLORS.surface,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: UI_COLORS.border,
+    },
     dialogTextInput: {
         marginBottom: 6,
-        backgroundColor: "#010617",
+        backgroundColor: UI_COLORS.surfaceMuted,
     },
     dialogHint: {
-        color: "#94a3b8",
+        color: UI_COLORS.textMuted,
         fontSize: 10,
+        marginTop: 8,
     },
     paceWarningDialogText: {
         color: "#f8fafc",

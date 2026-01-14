@@ -163,7 +163,7 @@ export default function PreferencesScreen() {
     const handleNotificationsToggle = useCallback(async () => {
         const nextValue = !formData.notificationsEnabled;
 
-        // Turning ON: request permission + register token.
+        // Turning ON: request permission + register token + persist preference server-side.
         if (nextValue) {
             try {
                 if (!isPushNotificationsAvailable()) {
@@ -186,17 +186,29 @@ export default function PreferencesScreen() {
                 }
 
                 await registerMyExpoPushToken(token);
+                await updateUserProfile({ notificationsEnabled: true });
+                await refreshProfile().catch(() => undefined);
                 handleToggleApply("notificationsEnabled", true);
                 showToast("Notifications activées");
             } catch (error: any) {
                 console.error("enable notifications", error);
                 Alert.alert("❌ Erreur", error?.message || "Impossible d'activer les notifications.");
+                try {
+                    const stored = await getStoredExpoPushToken();
+                    if (stored) {
+                        await unregisterMyExpoPushToken(stored);
+                    }
+                } catch {
+                    // ignore
+                } finally {
+                    await clearStoredExpoPushToken();
+                }
                 handleToggleApply("notificationsEnabled", false);
             }
             return;
         }
 
-        // Turning OFF: unregister the last stored token (best-effort).
+        // Turning OFF: unregister the last stored token (best-effort) + persist preference server-side.
         try {
             const stored = await getStoredExpoPushToken();
             if (stored) {
@@ -207,6 +219,12 @@ export default function PreferencesScreen() {
             console.warn("disable notifications", error?.message);
         } finally {
             await clearStoredExpoPushToken();
+            try {
+                await updateUserProfile({ notificationsEnabled: false });
+                await refreshProfile().catch(() => undefined);
+            } catch (error: any) {
+                console.warn("disable notifications (server)", error?.message);
+            }
             handleToggleApply("notificationsEnabled", false);
             showToast("Notifications désactivées");
         }

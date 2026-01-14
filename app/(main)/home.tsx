@@ -991,7 +991,7 @@ export default function HomePage() {
                                 <MaterialCommunityIcons name="newspaper-variant-outline" size={20} color="#cbd5e1" />
                                 <View style={{ flex: 1 }}>
                                     <Text style={styles.placeholderTitle}>Les actus arrivent bientôt</Text>
-                                    <Text style={styles.placeholderSubtitle}>Nous préparons un flux plus riche. En attendant, tu peux suivre tes séances et ta progression ici.</Text>
+                                    <Text style={styles.placeholderSubtitle}>Nous préparons un flux plus riche. En attendant, tu peux suivre tes séances et ta progression.</Text>
                                 </View>
                             </View>
                         </View>

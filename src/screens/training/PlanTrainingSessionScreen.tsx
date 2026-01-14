@@ -8,6 +8,7 @@ import {
     KeyboardEvent,
     Platform,
     Pressable,
+    RefreshControl,
     ScrollView,
     StyleSheet,
     View,
@@ -21,8 +22,13 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useAuth } from "../../context/AuthContext";
 import { useTraining } from "../../context/TrainingContext";
 import { buildDefaultTrainingFormValues } from "../../hooks/useTrainingForm";
+import { useTrainingTemplatesList } from "../../hooks/useTrainingTemplatesList";
+import { createSessionFromTemplate, getTrainingTemplate } from "../../api/trainingTemplateService";
 import { CreateTrainingSessionPayload } from "../../types/training";
+import { TrainingTemplate } from "../../types/trainingTemplate";
 import { formatDurationLabel } from "../../utils/trainingFormatter";
+
+type TemplatePickerSectionKey = "personal" | "default";
 
 const normalizeTime = (value: string) => {
     const trimmed = value.trim();
@@ -67,6 +73,66 @@ const buildAutoTitle = (date: Date) => {
     return `Séance du ${label}`;
 };
 
+const formatTrainingTypeLabel = (value?: string) => {
+    switch (value) {
+        case "vitesse":
+            return "Vitesse";
+        case "endurance":
+            return "Endurance";
+        case "force":
+            return "Force";
+        case "technique":
+            return "Technique";
+        case "récupération":
+            return "Récupération";
+        default:
+            return value || "—";
+    }
+};
+
+const getGroupSortKey = (label: string) => {
+    // Keep unknown types at the end.
+    return label === "—" ? "~~~~" : label;
+};
+
+const groupTemplatesByType = (templates: TrainingTemplate[]) => {
+    const list = [...templates];
+    list.sort((a, b) => {
+        const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        if (bTime !== aTime) return bTime - aTime;
+        return (a.title || "").localeCompare(b.title || "", "fr", { sensitivity: "base" });
+    });
+
+    const groups = new Map<string, TrainingTemplate[]>();
+    for (const template of list) {
+        const key = template.type || "";
+        const next = groups.get(key);
+        if (next) next.push(template);
+        else groups.set(key, [template]);
+    }
+
+    return Array.from(groups.entries())
+        .map(([type, templates]) => {
+            const label = formatTrainingTypeLabel(type);
+            return {
+                id: type || "unknown",
+                type,
+                label,
+                templates,
+            };
+        })
+        .sort((a, b) => getGroupSortKey(a.label).localeCompare(getGroupSortKey(b.label), "fr", { sensitivity: "base" }));
+};
+
+const formatTemplateSubtitle = (template: TrainingTemplate) => {
+    const parts: string[] = [];
+    if (template.isDefault) parts.push("Par défaut");
+    if (template.type) parts.push(formatTrainingTypeLabel(template.type));
+    if (typeof template.version === "number") parts.push(`v${template.version}`);
+    return parts.join(" · ");
+};
+
 export default function PlanTrainingSessionScreen() {
     const router = useRouter();
     const params = useLocalSearchParams<{ groupId?: string | string[] }>();
@@ -95,13 +161,94 @@ export default function PlanTrainingSessionScreen() {
     const [durationPickerVisible, setDurationPickerVisible] = useState(false);
     const [timePickerVisible, setTimePickerVisible] = useState(false);
 
+    const [templatePickerEnabled, setTemplatePickerEnabled] = useState<boolean>(false);
+    const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+    const [selectedTemplateTitle, setSelectedTemplateTitle] = useState<string>("");
+    const [templatePickerExpandedSections, setTemplatePickerExpandedSections] = useState<Set<TemplatePickerSectionKey>>(
+        () => new Set(),
+    );
+    const [templatePickerExpandedTypes, setTemplatePickerExpandedTypes] = useState<Set<string>>(() => new Set());
+
+    const {
+        templates,
+        loading: templatesLoading,
+        error: templatesError,
+        refresh: refreshTemplates,
+    } = useTrainingTemplatesList("library");
+
+    const sortedTemplates = useMemo(() => {
+        const list = [...templates];
+        list.sort((a, b) => {
+            const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+            const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+            return bTime - aTime;
+        });
+        return list;
+    }, [templates]);
+
+    const templatePickerSections = useMemo(() => {
+        const personalTemplates = sortedTemplates.filter((t) => !t.isDefault);
+        const defaultTemplates = sortedTemplates.filter((t) => Boolean(t.isDefault));
+
+        return [
+            {
+                key: "personal" as const,
+                title: "Plans personnels",
+                count: personalTemplates.length,
+                groups: groupTemplatesByType(personalTemplates),
+            },
+            {
+                key: "default" as const,
+                title: "Plans par défaut",
+                count: defaultTemplates.length,
+                groups: groupTemplatesByType(defaultTemplates),
+            },
+        ];
+    }, [sortedTemplates]);
+
     const canSubmit = useMemo(() => {
         if (!athleteId) return false;
         if (!normalizeTime(time)) return false;
         if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) return false;
         if (!place.trim()) return false;
+        if (templatePickerEnabled && !selectedTemplateId) return false;
         return true;
-    }, [athleteId, time, durationMinutes, place]);
+    }, [athleteId, durationMinutes, place, selectedTemplateId, templatePickerEnabled, time]);
+
+    useEffect(() => {
+        if (!templatePickerEnabled) return;
+        // UX: keep everything collapsed by default when enabling the picker.
+        setTemplatePickerExpandedSections(new Set());
+        setTemplatePickerExpandedTypes(new Set());
+    }, [templatePickerEnabled]);
+
+    const ensureSelectedTemplateTitle = useCallback(async () => {
+        if (!selectedTemplateId || selectedTemplateTitle) return;
+        try {
+            const fetched = await getTrainingTemplate(selectedTemplateId);
+            setSelectedTemplateTitle(fetched.title);
+        } catch {
+            // silent
+        }
+    }, [selectedTemplateId, selectedTemplateTitle]);
+
+    const toggleTemplatePickerSection = useCallback((key: TemplatePickerSectionKey) => {
+        setTemplatePickerExpandedSections((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    }, []);
+
+    const toggleTemplatePickerType = useCallback((key: string) => {
+        setTemplatePickerExpandedTypes((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    }, []);
 
     useEffect(() => {
         const showEvent = Platform.OS === "android" ? "keyboardDidShow" : "keyboardWillShow";
@@ -163,19 +310,40 @@ export default function PlanTrainingSessionScreen() {
             return;
         }
 
-        const base = buildDefaultTrainingFormValues(athleteId, groupId ? { groupId } : undefined);
-        const payload: CreateTrainingSessionPayload = {
-            ...base,
-            date: date.toISOString(),
-            startTime: normalizedTime,
-            durationMinutes: normalizedDuration,
-            place: normalizedPlace,
-            title: buildAutoTitle(date),
-            status: "planned",
-        };
+        if (templatePickerEnabled) {
+            if (!selectedTemplateId) {
+                Alert.alert("Template requis", "Choisis un template.");
+                return;
+            }
+        }
 
+        const base = buildDefaultTrainingFormValues(athleteId, groupId ? { groupId } : undefined);
         try {
             setSubmitting(true);
+
+            if (templatePickerEnabled && selectedTemplateId) {
+                await ensureSelectedTemplateTitle();
+                const session = await createSessionFromTemplate(selectedTemplateId, {
+                    date,
+                    startTime: normalizedTime,
+                    durationMinutes: normalizedDuration,
+                    groupId: groupId ? groupId : undefined,
+                    place: normalizedPlace,
+                });
+                router.replace({ pathname: "/(main)/training/edit/[id]", params: { id: session.id } });
+                return;
+            }
+
+            const payload: CreateTrainingSessionPayload = {
+                ...base,
+                date: date.toISOString(),
+                startTime: normalizedTime,
+                durationMinutes: normalizedDuration,
+                place: normalizedPlace,
+                title: buildAutoTitle(date),
+                status: "planned",
+            };
+
             const session = await createSession(payload);
             router.replace({ pathname: "/(main)/training/edit/[id]", params: { id: session.id } });
         } catch (err: any) {
@@ -183,7 +351,19 @@ export default function PlanTrainingSessionScreen() {
         } finally {
             setSubmitting(false);
         }
-    }, [athleteId, createSession, date, durationMinutes, groupId, place, router, time]);
+    }, [
+        athleteId,
+        createSession,
+        date,
+        durationMinutes,
+        ensureSelectedTemplateTitle,
+        groupId,
+        place,
+        router,
+        selectedTemplateId,
+        templatePickerEnabled,
+        time,
+    ]);
 
     const bottomSpacing = Math.max(insets.bottom, 0);
     const keyboardVerticalOffset = Math.max(insets.top, 16) + 48;
@@ -212,6 +392,11 @@ export default function PlanTrainingSessionScreen() {
                         styles.container,
                         { paddingTop: insets.top + 10, paddingBottom: scrollBottomPadding + 20 },
                     ]}
+                    refreshControl={
+                        templatePickerEnabled ? (
+                            <RefreshControl refreshing={templatesLoading} onRefresh={refreshTemplates} tintColor="#22d3ee" />
+                        ) : undefined
+                    }
                 >
                     <View style={styles.header}>
                         <Text style={styles.title}>Planifier une séance</Text>
@@ -335,6 +520,198 @@ export default function PlanTrainingSessionScreen() {
                             />
                         </View>
 
+                        <Text style={[styles.cardTitle, { marginTop: 14 }]}>Plan d’entraînement</Text>
+                        <View style={styles.choiceRow}>
+                            <Pressable
+                                accessibilityRole="button"
+                                onPress={() => {
+                                    setTemplatePickerEnabled(false);
+                                    setSelectedTemplateId("");
+                                    setSelectedTemplateTitle("");
+                                }}
+                                style={({ pressed }) => [
+                                    styles.choiceCard,
+                                    !templatePickerEnabled && styles.choiceCardActive,
+                                    pressed && styles.choiceCardPressed,
+                                ]}
+                            >
+                                <View style={styles.choiceHeader}>
+                                    <MaterialCommunityIcons name="file-outline" size={18} color="#38bdf8" />
+                                    <Text style={styles.choiceTitle}>Sans template</Text>
+                                </View>
+                                <Text style={styles.choiceSubtitle}>Créer une séance vide</Text>
+                            </Pressable>
+
+                            <Pressable
+                                accessibilityRole="button"
+                                onPress={() => setTemplatePickerEnabled(true)}
+                                style={({ pressed }) => [
+                                    styles.choiceCard,
+                                    templatePickerEnabled && styles.choiceCardActive,
+                                    pressed && styles.choiceCardPressed,
+                                ]}
+                            >
+                                <View style={styles.choiceHeader}>
+                                    <MaterialCommunityIcons name="bookmark-multiple-outline" size={18} color="#38bdf8" />
+                                    <Text style={styles.choiceTitle}>Depuis un plan</Text>
+                                </View>
+                                <Text style={styles.choiceSubtitle}>Choisir un template existant</Text>
+                            </Pressable>
+                        </View>
+
+                        {templatePickerEnabled ? (
+                            <View style={{ marginTop: 10, gap: 10 }}>
+                                {templatesError ? (
+                                    <View style={styles.stateContainer}>
+                                        <Text style={styles.stateTitle}>Impossible de charger</Text>
+                                        <Text style={styles.stateSubtitle}>{templatesError}</Text>
+                                    </View>
+                                ) : null}
+
+                                {templatesLoading && !sortedTemplates.length ? (
+                                    <View style={styles.loadingBox}>
+                                        <ActivityIndicator size="small" color="#22d3ee" />
+                                    </View>
+                                ) : null}
+
+                                {!templatesLoading && !sortedTemplates.length ? (
+                                    <View style={styles.stateContainer}>
+                                        <Text style={styles.stateTitle}>Aucun template</Text>
+                                        <Text style={styles.stateSubtitle}>Crée un template pour l’utiliser ici.</Text>
+                                    </View>
+                                ) : (
+                                    <View style={styles.list}>
+                                        {templatePickerSections.map((section) => {
+                                            const sectionExpanded = templatePickerExpandedSections.has(section.key);
+                                            return (
+                                                <View key={section.key} style={{ gap: 10 }}>
+                                                    <Pressable
+                                                        accessibilityRole="button"
+                                                        onPress={() => toggleTemplatePickerSection(section.key)}
+                                                        style={({ pressed }) => [
+                                                            styles.templatePickerSectionHeader,
+                                                            pressed && styles.templatePickerSectionHeaderPressed,
+                                                        ]}
+                                                    >
+                                                        <View style={styles.templatePickerSectionHeaderLeft}>
+                                                            <MaterialCommunityIcons
+                                                                name={sectionExpanded ? "chevron-down" : "chevron-right"}
+                                                                size={18}
+                                                                color="#94a3b8"
+                                                            />
+                                                            <Text style={styles.templatePickerSectionTitle}>{section.title}</Text>
+                                                        </View>
+                                                        <View style={styles.templatePickerCountPill}>
+                                                            <Text style={styles.templatePickerCountPillText}>{section.count}</Text>
+                                                        </View>
+                                                    </Pressable>
+
+                                                    {sectionExpanded ? (
+                                                        section.count ? (
+                                                            <View style={{ gap: 10 }}>
+                                                                {section.groups.map((group) => {
+                                                                    const typeKey = `${section.key}:${group.id}`;
+                                                                    const typeExpanded = templatePickerExpandedTypes.has(typeKey);
+                                                                    return (
+                                                                        <View key={typeKey} style={{ gap: 10 }}>
+                                                                            <Pressable
+                                                                                accessibilityRole="button"
+                                                                                onPress={() => toggleTemplatePickerType(typeKey)}
+                                                                                style={({ pressed }) => [
+                                                                                    styles.templatePickerTypeHeader,
+                                                                                    pressed && styles.templatePickerTypeHeaderPressed,
+                                                                                ]}
+                                                                            >
+                                                                                <View style={styles.templatePickerTypeHeaderLeft}>
+                                                                                    <MaterialCommunityIcons
+                                                                                        name={typeExpanded ? "chevron-down" : "chevron-right"}
+                                                                                        size={16}
+                                                                                        color="#94a3b8"
+                                                                                    />
+                                                                                    <Text style={styles.templatePickerTypeTitle}>{group.label}</Text>
+                                                                                </View>
+                                                                                <View style={styles.templatePickerTypeCountPill}>
+                                                                                    <Text style={styles.templatePickerTypeCountPillText}>
+                                                                                        {group.templates.length}
+                                                                                    </Text>
+                                                                                </View>
+                                                                            </Pressable>
+
+                                                                            {typeExpanded ? (
+                                                                                <View style={{ gap: 10 }}>
+                                                                                    {group.templates.map((template) => {
+                                                                                        const active = selectedTemplateId === template.id;
+                                                                                        return (
+                                                                                            <Pressable
+                                                                                                key={template.id}
+                                                                                                accessibilityRole="button"
+                                                                                                onPress={() => {
+                                                                                                    setSelectedTemplateId(template.id);
+                                                                                                    setSelectedTemplateTitle(template.title);
+                                                                                                }}
+                                                                                                style={({ pressed }) => [
+                                                                                                    styles.templateRow,
+                                                                                                    styles.templateRowIndented,
+                                                                                                    active && styles.templateRowActive,
+                                                                                                    pressed && styles.templateRowPressed,
+                                                                                                ]}
+                                                                                            >
+                                                                                                <View style={styles.templateRowIcon}>
+                                                                                                    <MaterialCommunityIcons
+                                                                                                        name={
+                                                                                                            active
+                                                                                                                ? "check-circle"
+                                                                                                                : "checkbox-blank-circle-outline"
+                                                                                                        }
+                                                                                                        size={16}
+                                                                                                        color={active ? "#22d3ee" : "#94a3b8"}
+                                                                                                    />
+                                                                                                </View>
+                                                                                                <View style={styles.templateRowMain}>
+                                                                                                    <View style={styles.templateRowTitleRow}>
+                                                                                                        <Text style={styles.templateRowTitle}>
+                                                                                                            {template.title}
+                                                                                                        </Text>
+                                                                                                        {template.isDefault ? (
+                                                                                                            <View style={styles.templateDefaultBadge}>
+                                                                                                                <Text
+                                                                                                                    style={
+                                                                                                                        styles.templateDefaultBadgeText
+                                                                                                                    }
+                                                                                                                >
+                                                                                                                    Par défaut
+                                                                                                                </Text>
+                                                                                                            </View>
+                                                                                                        ) : null}
+                                                                                                    </View>
+                                                                                                    <Text style={styles.templateRowSubtitle}>
+                                                                                                        {formatTemplateSubtitle(template)}
+                                                                                                    </Text>
+                                                                                                </View>
+                                                                                            </Pressable>
+                                                                                        );
+                                                                                    })}
+                                                                                </View>
+                                                                            ) : null}
+                                                                        </View>
+                                                                    );
+                                                                })}
+                                                            </View>
+                                                        ) : (
+                                                            <View style={styles.stateContainer}>
+                                                                <Text style={styles.stateTitle}>Aucun plan</Text>
+                                                                <Text style={styles.stateSubtitle}>Rien ici pour l’instant.</Text>
+                                                            </View>
+                                                        )
+                                                    ) : null}
+                                                </View>
+                                            );
+                                        })}
+                                    </View>
+                                )}
+                            </View>
+                        ) : null}
+
                         <Button
                             mode="contained"
                             onPress={handleSubmit}
@@ -429,6 +806,205 @@ const styles = StyleSheet.create({
     },
     input: {
         backgroundColor: "rgba(2,6,23,0.2)",
+    },
+    choiceRow: {
+        flexDirection: "row",
+        gap: 12,
+        marginTop: 6,
+    },
+    choiceCard: {
+        flex: 1,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: "rgba(148,163,184,0.22)",
+        backgroundColor: "rgba(2,6,23,0.22)",
+        padding: 14,
+        gap: 6,
+    },
+    choiceCardActive: {
+        borderColor: "rgba(34,211,238,0.7)",
+        backgroundColor: "rgba(34,211,238,0.08)",
+    },
+    choiceCardPressed: {
+        opacity: 0.92,
+    },
+    choiceHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    choiceTitle: {
+        color: "#f8fafc",
+        fontSize: 14,
+        fontWeight: "800",
+    },
+    choiceSubtitle: {
+        color: "#94a3b8",
+        fontSize: 10,
+        fontStyle: "italic",
+    },
+    loadingBox: {
+        paddingVertical: 10,
+        alignItems: "center",
+    },
+    list: {
+        gap: 10,
+    },
+    stateContainer: {
+        borderRadius: 18,
+        padding: 14,
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.05)",
+        backgroundColor: "rgba(2,6,23,0.22)",
+        gap: 4,
+    },
+    stateTitle: {
+        color: "#f8fafc",
+        fontWeight: "800",
+    },
+    stateSubtitle: {
+        color: "#94a3b8",
+    },
+    templatePickerSectionHeader: {
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: "rgba(148,163,184,0.22)",
+        backgroundColor: "rgba(2,6,23,0.22)",
+        paddingVertical: 12,
+        paddingHorizontal: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+    templatePickerSectionHeaderPressed: {
+        opacity: 0.92,
+    },
+    templatePickerSectionHeaderLeft: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        flex: 1,
+    },
+    templatePickerSectionTitle: {
+        color: "#f8fafc",
+        fontSize: 14,
+        fontWeight: "900",
+        flex: 1,
+    },
+    templatePickerCountPill: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: "rgba(148,163,184,0.22)",
+        backgroundColor: "rgba(2,6,23,0.22)",
+        minWidth: 34,
+        alignItems: "center",
+    },
+    templatePickerCountPillText: {
+        color: "#cbd5e1",
+        fontSize: 12,
+        fontWeight: "900",
+    },
+    templatePickerTypeHeader: {
+        marginLeft: 14,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: "rgba(148,163,184,0.12)",
+        backgroundColor: "rgba(2,6,23,0.12)",
+        paddingVertical: 10,
+        paddingHorizontal: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+    templatePickerTypeHeaderPressed: {
+        opacity: 0.92,
+    },
+    templatePickerTypeHeaderLeft: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        flex: 1,
+    },
+    templatePickerTypeTitle: {
+        color: "#e7e9f0ff",
+        fontSize: 13,
+        fontWeight: "800",
+        flex: 1,
+    },
+    templatePickerTypeCountPill: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: "rgba(148,163,184,0.16)",
+        backgroundColor: "rgba(2,6,23,0.16)",
+        minWidth: 30,
+        alignItems: "center",
+    },
+    templatePickerTypeCountPillText: {
+        color: "#94a3b8",
+        fontSize: 11,
+        fontWeight: "900",
+    },
+    templateRow: {
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: "rgba(148,163,184,0.12)",
+        backgroundColor: "rgba(2,6,23,0.16)",
+        padding: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    templateRowActive: {
+        borderColor: "rgba(34,211,238,0.6)",
+        backgroundColor: "rgba(34,211,238,0.08)",
+    },
+    templateRowPressed: {
+        opacity: 0.92,
+    },
+    templateRowIndented: {
+        marginLeft: 28,
+    },
+    templateRowIcon: {
+        width: 26,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    templateRowMain: {
+        flex: 1,
+        gap: 2,
+    },
+    templateRowTitleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+    },
+    templateRowTitle: {
+        color: "#f8fafc",
+        fontSize: 14,
+        fontWeight: "800",
+        flex: 1,
+    },
+    templateDefaultBadge: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: "rgba(34,211,238,0.35)",
+        backgroundColor: "rgba(34,211,238,0.12)",
+    },
+    templateDefaultBadgeText: {
+        color: "#22d3ee",
+        fontSize: 11,
+        fontWeight: "800",
+    },
+    templateRowSubtitle: {
+        color: "#94a3b8",
+        fontSize: 12,
     },
     submit: {
         marginTop: 16,

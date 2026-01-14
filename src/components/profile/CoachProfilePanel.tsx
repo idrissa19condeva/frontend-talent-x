@@ -145,6 +145,7 @@ export default function CoachProfilePanel() {
 
 const styles = StyleSheet.create({
     wrapper: {
+        marginTop: 12,
         marginBottom: 16,
     },
     card: {

@@ -14,17 +14,19 @@ import {
     View,
 } from "react-native";
 import { Button, Text, TextInput } from "react-native-paper";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, useSegments } from "expo-router";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 
+import { useTraining } from "../../context/TrainingContext";
 import { useTrainingTemplatesList } from "../../hooks/useTrainingTemplatesList";
 import { createSessionFromTemplate, getTrainingTemplate } from "../../api/trainingTemplateService";
 import { consumeNavigationResult } from "../../utils/navigationResults";
 import { TrainingTemplate } from "../../types/trainingTemplate";
 import { formatDurationLabel } from "../../utils/trainingFormatter";
+import { TrainingSession } from "../../types/training";
 
 type WizardStep = 1 | 2 | 3;
 
@@ -63,19 +65,46 @@ const buildDurationDate = (durationMinutes: number): Date => {
 const minutesFromDate = (date: Date): number => clampDurationMinutes(date.getHours() * 60 + date.getMinutes());
 
 const formatTemplateSubtitle = (template: TrainingTemplate) => {
-    const parts: string[] = [];
-    if (template.type) parts.push(template.type);
-    if (typeof template.version === "number") parts.push(`v${template.version}`);
-    return parts.join(" · ");
+    return "";
+};
+
+const formatTrainingTypeLabel = (value?: string) => {
+    switch (value) {
+        case "vitesse":
+            return "Vitesse";
+        case "endurance":
+            return "Endurance";
+        case "force":
+            return "Force";
+        case "technique":
+            return "Technique";
+        case "récupération":
+            return "Récupération";
+        default:
+            return value || "Autres";
+    }
+};
+
+const getGroupSortKey = (label: string) => {
+    return label === "Autres" ? "~~~~" : label;
 };
 
 export default function CreateTrainingSessionWizardScreen() {
     const router = useRouter();
     const params = useLocalSearchParams<{ templateId?: string; id?: string; groupId?: string }>();
+    const segments = useSegments();
     const insets = useSafeAreaInsets();
     const isFocused = useIsFocused();
-    const initialTemplateId = (params?.templateId || params?.id || "").toString();
+    const isEditMode = useMemo(() => segments.join("/").includes("edit"), [segments]);
+    const routeId = (params?.id || "").toString();
+    const initialTemplateId = (params?.templateId || (!isEditMode ? routeId : "") || "").toString();
     const initialGroupId = (params?.groupId || "").toString();
+    const editingSessionId = isEditMode ? routeId : "";
+
+    const { fetchSession, updateSession } = useTraining();
+    const [editingSession, setEditingSession] = useState<TrainingSession | null>(null);
+    const [prefillLoading, setPrefillLoading] = useState(false);
+    const [prefillError, setPrefillError] = useState<string | null>(null);
 
     const [step, setStep] = useState<WizardStep>(1);
     const [templatePickerEnabled, setTemplatePickerEnabled] = useState<boolean>(Boolean(initialTemplateId));
@@ -84,6 +113,9 @@ export default function CreateTrainingSessionWizardScreen() {
     const [pendingTemplateReturnKey, setPendingTemplateReturnKey] = useState<string>("");
     const pendingTemplateReturnKeyRef = useRef<string>("");
     const wasFocusedRef = useRef<boolean>(true);
+
+    const [expandedTemplateTypeIds, setExpandedTemplateTypeIds] = useState<Set<string>>(() => new Set());
+    const autoExpandedSelectedGroupRef = useRef(false);
 
     const [submitting, setSubmitting] = useState(false);
     const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -103,6 +135,41 @@ export default function CreateTrainingSessionWizardScreen() {
     const [timePickerVisible, setTimePickerVisible] = useState(false);
 
     const { templates, loading: templatesLoading, error: templatesError, refresh: refreshTemplates } = useTrainingTemplatesList();
+
+    const loadSessionForEdit = useCallback(async () => {
+        if (!isEditMode || !editingSessionId) return;
+        setPrefillError(null);
+        setPrefillLoading(true);
+        try {
+            const session = await fetchSession(editingSessionId);
+            setEditingSession(session);
+            setDate(new Date(session.date));
+            setTime(session.startTime || "09:00");
+            setDurationMinutes(session.durationMinutes || 60);
+            setPlace(session.place || "");
+
+            const hydratedTemplateId = session.templateId || session.templateSnapshot?.id;
+            if (hydratedTemplateId) {
+                setSelectedTemplateId(hydratedTemplateId);
+                setSelectedTemplateTitle(session.templateSnapshot?.title || "");
+                setTemplatePickerEnabled(true);
+            }
+        } catch (e: any) {
+            setPrefillError(e?.message || "Impossible de charger la séance");
+        } finally {
+            setPrefillLoading(false);
+        }
+    }, [editingSessionId, fetchSession, isEditMode]);
+
+    useEffect(() => {
+        if (!isEditMode) {
+            setEditingSession(null);
+            setPrefillError(null);
+            setPrefillLoading(false);
+            return;
+        }
+        loadSessionForEdit();
+    }, [isEditMode, loadSessionForEdit]);
 
     useEffect(() => {
         const showEvent = Platform.OS === "android" ? "keyboardDidShow" : "keyboardWillShow";
@@ -200,6 +267,50 @@ export default function CreateTrainingSessionWizardScreen() {
         [selectedTemplateId, sortedTemplates],
     );
 
+    const templatesByType = useMemo(() => {
+        const groups = new Map<string, { id: string; label: string; templates: TrainingTemplate[] }>();
+        for (const template of sortedTemplates) {
+            const typeKey = template.type || "";
+            const id = typeKey || "unknown";
+            const label = formatTrainingTypeLabel(typeKey);
+            const existing = groups.get(id);
+            if (existing) {
+                existing.templates.push(template);
+            } else {
+                groups.set(id, { id, label, templates: [template] });
+            }
+        }
+
+        return Array.from(groups.values()).sort((a, b) =>
+            getGroupSortKey(a.label).localeCompare(getGroupSortKey(b.label), "fr", { sensitivity: "base" }),
+        );
+    }, [sortedTemplates]);
+
+    const toggleTemplateGroup = useCallback((groupId: string) => {
+        setExpandedTemplateTypeIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(groupId)) next.delete(groupId);
+            else next.add(groupId);
+            return next;
+        });
+    }, []);
+
+    useEffect(() => {
+        if (step !== 2) return;
+        if (!templatePickerEnabled) return;
+        if (!selectedTemplateId) return;
+        if (autoExpandedSelectedGroupRef.current) return;
+
+        // Only auto-open when arriving with a preselected template (planification / modification flows).
+        const shouldAutoExpand = isEditMode || Boolean(initialTemplateId);
+        if (!shouldAutoExpand) return;
+
+        const group = templatesByType.find((g) => g.templates.some((t) => t.id === selectedTemplateId));
+        if (!group) return;
+        setExpandedTemplateTypeIds(new Set([group.id]));
+        autoExpandedSelectedGroupRef.current = true;
+    }, [initialTemplateId, isEditMode, selectedTemplateId, step, templatePickerEnabled, templatesByType]);
+
     const canGoNextFromStep1 = useMemo(() => {
         if (!normalizeTime(time)) return false;
         if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) return false;
@@ -224,6 +335,55 @@ export default function CreateTrainingSessionWizardScreen() {
             // silent; title will show as fallback
         }
     }, [selectedTemplateId, selectedTemplateTitle]);
+
+    const handleUpdate = useCallback(async () => {
+        if (!isEditMode || !editingSessionId || !editingSession) return;
+        const normalizedTime = normalizeTime(time);
+        const normalizedDuration = clampDurationMinutes(durationMinutes);
+        const normalizedPlace = place.trim();
+        if (!normalizedTime || !normalizedDuration || !normalizedPlace) {
+            Alert.alert("Champs invalides", "Vérifie l'heure, la durée, et le lieu.");
+            return;
+        }
+        if (!selectedTemplateId) {
+            Alert.alert("Template requis", "Choisis un template.");
+            setStep(2);
+            return;
+        }
+
+        try {
+            setSubmitting(true);
+            const template = await getTrainingTemplate(selectedTemplateId);
+
+            await updateSession(editingSessionId, {
+                athleteId: editingSession.athleteId,
+                date,
+                startTime: normalizedTime,
+                durationMinutes: normalizedDuration,
+                type: template.type,
+                title: template.title,
+                place: normalizedPlace,
+                description: template.description || "",
+                series: template.series || [],
+                seriesRestInterval: template.seriesRestInterval,
+                seriesRestUnit: template.seriesRestUnit,
+                targetIntensity: template.targetIntensity,
+                coachNotes: editingSession.coachNotes,
+                athleteFeedback: editingSession.athleteFeedback,
+                equipment: template.equipment,
+                templateId: template.id,
+                templateSnapshot: template,
+                status: editingSession.status,
+                groupId: editingSession.group?.id || editingSession.groupId || undefined,
+            } as any);
+
+            router.replace(`/(main)/training/${editingSessionId}`);
+        } catch (err: any) {
+            Alert.alert("Erreur", err?.response?.data?.message || err?.message || "Impossible de mettre à jour la séance");
+        } finally {
+            setSubmitting(false);
+        }
+    }, [date, durationMinutes, editingSession, editingSessionId, isEditMode, place, router, selectedTemplateId, setStep, time, updateSession]);
 
     const goNext = useCallback(async () => {
         if (step === 1) {
@@ -288,6 +448,37 @@ export default function CreateTrainingSessionWizardScreen() {
         }
     }, [date, durationMinutes, initialGroupId, place, router, selectedTemplateId, time]);
 
+    if (isEditMode && prefillLoading) {
+        return (
+            <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
+                <View style={styles.stateContainer}>
+                    <ActivityIndicator color="#22d3ee" />
+                    <Text style={styles.stateSubtitle}>Chargement de la séance...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
+    if (isEditMode && prefillError) {
+        return (
+            <SafeAreaView style={styles.safeArea} edges={["left", "right"]}>
+                <View style={styles.stateContainer}>
+                    <Text style={styles.stateTitle}>Impossible de charger</Text>
+                    <Text style={styles.stateSubtitle}>{prefillError}</Text>
+                    <Button
+                        mode="contained"
+                        onPress={loadSessionForEdit}
+                        buttonColor="#22d3ee"
+                        textColor="#02111f"
+                        style={{ marginTop: 12 }}
+                    >
+                        Réessayer
+                    </Button>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
     const stepLabel = step === 1 ? "Planification" : step === 2 ? "Ajouter un plan d'entraînement" : "Finalisation";
 
     const bottomSpacing = Math.max(insets.bottom, 0);
@@ -324,7 +515,7 @@ export default function CreateTrainingSessionWizardScreen() {
                     }
                 >
                     <View style={styles.header}>
-                        <Text style={styles.title}>Créer une séance</Text>
+                        <Text style={styles.title}>{isEditMode ? "Modifier une séance" : "Créer une séance"}</Text>
                         <Text style={styles.subtitle}>{stepLabel}</Text>
                     </View>
 
@@ -458,6 +649,16 @@ export default function CreateTrainingSessionWizardScreen() {
                                     </View>
                                 ) : null}
 
+                                {isEditMode && editingSession && !selectedTemplateId ? (
+                                    <View style={styles.stateContainer}>
+                                        <Text style={styles.stateTitle}>Aucun plan associé</Text>
+                                        <Text style={styles.stateSubtitle}>
+                                            Cette séance n&apos;est pas liée à un plan d&apos;entraînement enregistré, donc &quot;Modifier ce plan&quot;
+                                            n&apos;apparaît pas. Choisis un plan via &quot;Séries et blocs&quot; (ou crée-en un nouveau).
+                                        </Text>
+                                    </View>
+                                ) : null}
+
                                 <View style={styles.choiceRow}>
                                     <Pressable
                                         accessibilityRole="button"
@@ -484,7 +685,7 @@ export default function CreateTrainingSessionWizardScreen() {
                                             <MaterialCommunityIcons name="file-outline" size={18} color="#38bdf8" />
                                             <Text style={styles.choiceTitle}>Nouvelle série</Text>
                                         </View>
-                                        <Text style={styles.choiceSubtitle}>Créer un nouveau plan d'entraînement</Text>
+                                        <Text style={styles.choiceSubtitle}>Créer un nouveau plan d&apos;entraînement</Text>
                                     </Pressable>
 
                                     <Pressable
@@ -500,9 +701,36 @@ export default function CreateTrainingSessionWizardScreen() {
                                             <MaterialCommunityIcons name="bookmark-multiple-outline" size={18} color="#38bdf8" />
                                             <Text style={styles.choiceTitle}>Séries et blocs</Text>
                                         </View>
-                                        <Text style={styles.choiceSubtitle}>Vos plans d'entraînement</Text>
+                                        <Text style={styles.choiceSubtitle}>Vos plans d&apos;entraînement</Text>
                                     </Pressable>
                                 </View>
+
+                                {selectedTemplateId ? (
+                                    <Button
+                                        mode="outlined"
+                                        onPress={() => {
+                                            if (!canGoNextFromStep1) {
+                                                Alert.alert(
+                                                    "Planification requise",
+                                                    "Renseigne d'abord la date, l'heure, la durée et le lieu.",
+                                                );
+                                                setStep(1);
+                                                return;
+                                            }
+
+                                            const returnKey = `wizard-edit-template-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                                            setPendingTemplateReturnKey(returnKey);
+                                            router.push({
+                                                pathname: "/(main)/training/templates/edit/[id]",
+                                                params: { id: selectedTemplateId, returnKey } as any,
+                                            });
+                                        }}
+                                        textColor="#22d3ee"
+                                        style={{ marginTop: 10 }}
+                                    >
+                                        Modifier ce plan
+                                    </Button>
+                                ) : null}
 
                                 {templatePickerEnabled ? (
                                     <View style={{ marginTop: 10, gap: 10 }}>
@@ -519,36 +747,66 @@ export default function CreateTrainingSessionWizardScreen() {
                                             </View>
                                         ) : (
                                             <View style={styles.list}>
-                                                {sortedTemplates.map((template) => {
-                                                    const active = selectedTemplateId === template.id;
-                                                    return (
+                                                {templatesByType.map((group) => (
+                                                    <View key={group.id} style={styles.templateGroup}>
                                                         <Pressable
-                                                            key={template.id}
                                                             accessibilityRole="button"
-                                                            onPress={() => {
-                                                                setSelectedTemplateId(template.id);
-                                                                setSelectedTemplateTitle(template.title);
-                                                            }}
+                                                            onPress={() => toggleTemplateGroup(group.id)}
                                                             style={({ pressed }) => [
-                                                                styles.templateRow,
-                                                                active && styles.templateRowActive,
-                                                                pressed && styles.templateRowPressed,
+                                                                styles.templateGroupHeader,
+                                                                pressed && styles.templateGroupHeaderPressed,
                                                             ]}
                                                         >
-                                                            <View style={styles.templateRowIcon}>
+                                                            <View style={styles.templateGroupHeaderLeft}>
                                                                 <MaterialCommunityIcons
-                                                                    name={active ? "check-circle" : "checkbox-blank-circle-outline"}
-                                                                    size={16}
-                                                                    color={active ? "#22d3ee" : "#94a3b8"}
+                                                                    name={expandedTemplateTypeIds.has(group.id) ? "chevron-down" : "chevron-right"}
+                                                                    size={18}
+                                                                    color="#94a3b8"
                                                                 />
+                                                                <Text style={styles.templateGroupTitle}>{group.label}</Text>
                                                             </View>
-                                                            <View style={styles.templateRowMain}>
-                                                                <Text style={styles.templateRowTitle}>{template.title}</Text>
-                                                                <Text style={styles.templateRowSubtitle}>{formatTemplateSubtitle(template)}</Text>
-                                                            </View>
+                                                            <Text style={styles.templateGroupCount}>{group.templates.length}</Text>
                                                         </Pressable>
-                                                    );
-                                                })}
+
+                                                        {expandedTemplateTypeIds.has(group.id) ? (
+                                                            <View style={styles.templateGroupList}>
+                                                                {group.templates.map((template) => {
+                                                                    const active = selectedTemplateId === template.id;
+                                                                    const subtitle = formatTemplateSubtitle(template);
+                                                                    return (
+                                                                        <Pressable
+                                                                            key={template.id}
+                                                                            accessibilityRole="button"
+                                                                            onPress={() => {
+                                                                                setSelectedTemplateId(template.id);
+                                                                                setSelectedTemplateTitle(template.title);
+                                                                            }}
+                                                                            style={({ pressed }) => [
+                                                                                styles.templateRow,
+                                                                                active && styles.templateRowActive,
+                                                                                pressed && styles.templateRowPressed,
+                                                                            ]}
+                                                                        >
+                                                                            <View style={styles.templateRowIcon}>
+                                                                                <MaterialCommunityIcons
+                                                                                    name={active ? "check-circle" : "checkbox-blank-circle-outline"}
+                                                                                    size={16}
+                                                                                    color={active ? "#22d3ee" : "#94a3b8"}
+                                                                                />
+                                                                            </View>
+                                                                            <View style={styles.templateRowMain}>
+                                                                                <Text style={styles.templateRowTitle}>{template.title}</Text>
+                                                                                {subtitle ? (
+                                                                                    <Text style={styles.templateRowSubtitle}>{subtitle}</Text>
+                                                                                ) : null}
+                                                                            </View>
+                                                                        </Pressable>
+                                                                    );
+                                                                })}
+                                                            </View>
+                                                        ) : null}
+                                                    </View>
+                                                ))}
                                             </View>
                                         )}
                                     </View>
@@ -610,6 +868,17 @@ export default function CreateTrainingSessionWizardScreen() {
                                     disabled={submitting || (step === 1 ? !canGoNextFromStep1 : !canGoNextFromStep2)}
                                 >
                                     Suivant
+                                </Button>
+                            ) : isEditMode ? (
+                                <Button
+                                    mode="contained"
+                                    onPress={handleUpdate}
+                                    buttonColor="#22d3ee"
+                                    textColor="#02111f"
+                                    loading={submitting}
+                                    disabled={!canSubmit || submitting}
+                                >
+                                    Mettre à jour
                                 </Button>
                             ) : (
                                 <Button
@@ -748,6 +1017,39 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     list: {
+        gap: 10,
+    },
+    templateGroup: {
+        gap: 10,
+    },
+    templateGroupHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+    },
+    templateGroupHeaderPressed: {
+        opacity: 0.9,
+    },
+    templateGroupHeaderLeft: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    templateGroupTitle: {
+        color: "#cbd5e1",
+        fontSize: 12,
+        fontWeight: "900",
+        letterSpacing: 0.2,
+        textTransform: "uppercase",
+    },
+    templateGroupCount: {
+        color: "#94a3b8",
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    templateGroupList: {
         gap: 10,
     },
     templateRow: {

@@ -175,6 +175,7 @@ export default function TrainingBlockEditorScreen() {
 
     const [loading, setLoading] = useState(false);
     const [prefillLoading, setPrefillLoading] = useState(false);
+    const [isDefaultBlock, setIsDefaultBlock] = useState(false);
 
     const [title, setTitle] = useState("");
     const [segment, setSegment] = useState<TrainingBlockSegment>(() => buildDefaultSegment("vitesse"));
@@ -449,6 +450,7 @@ export default function TrainingBlockEditorScreen() {
         setPrefillLoading(true);
         try {
             const block = await getTrainingBlock(blockId);
+            setIsDefaultBlock(Boolean((block as any)?.isDefault));
             setTitle(block.title || "");
             setSegment(block.segment || buildDefaultSegment("vitesse"));
         } catch (error) {
@@ -467,8 +469,20 @@ export default function TrainingBlockEditorScreen() {
         if (!canSubmit) return;
         setLoading(true);
         try {
+            // Default blocks are read-only server-side (403 on PUT). When editing a default block,
+            // create a personal copy on save.
             if (isEditing && blockId) {
-                await updateTrainingBlock(blockId, { title: title.trim(), segment });
+                if (isDefaultBlock) {
+                    const created = await createTrainingBlock({ title: title.trim(), segment });
+                    if (returnKey) {
+                        setNavigationResult(returnKey, { block: created, serieId: returnSerieId });
+                    } else {
+                        router.replace(`/(main)/training/blocks/edit/${created.id}`);
+                        return;
+                    }
+                } else {
+                    await updateTrainingBlock(blockId, { title: title.trim(), segment });
+                }
             } else {
                 const created = await createTrainingBlock({ title: title.trim(), segment });
                 if (returnKey) {
@@ -482,11 +496,20 @@ export default function TrainingBlockEditorScreen() {
             }
         } catch (error) {
             console.error("Erreur sauvegarde bloc:", error);
-            Alert.alert("Erreur", "Impossible d'enregistrer le bloc.");
+            const apiMessage = (error as any)?.response?.data?.message;
+            const fallbackMessage = (error as any)?.message;
+            Alert.alert(
+                "Erreur",
+                typeof apiMessage === "string" && apiMessage.trim()
+                    ? apiMessage
+                    : typeof fallbackMessage === "string" && fallbackMessage.trim()
+                        ? fallbackMessage
+                        : "Impossible d'enregistrer le bloc.",
+            );
         } finally {
             setLoading(false);
         }
-    }, [blockId, canSubmit, isEditing, returnKey, returnSerieId, router, segment, title]);
+    }, [blockId, canSubmit, isDefaultBlock, isEditing, returnKey, returnSerieId, router, segment, title]);
 
     const handleDelete = useCallback(async () => {
         if (!blockId) return;

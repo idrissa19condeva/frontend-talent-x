@@ -10,8 +10,9 @@ import {
 import { API_URL } from "./config";
 const TEMPLATE_ENDPOINT = `${API_URL}/training-templates`;
 
-export const listTrainingTemplates = async (): Promise<TrainingTemplate[]> => {
-    const response = await http.get<TrainingTemplate[]>(`${TEMPLATE_ENDPOINT}/mine`);
+export const listTrainingTemplates = async (scope: "mine" | "library" = "mine"): Promise<TrainingTemplate[]> => {
+    const suffix = scope === "library" ? "library" : "mine";
+    const response = await http.get<TrainingTemplate[]>(`${TEMPLATE_ENDPOINT}/${suffix}`);
     return response.data;
 };
 
@@ -37,6 +38,11 @@ export const updateTrainingTemplate = async (
 
 export const deleteTrainingTemplate = async (id: string): Promise<void> => {
     await http.delete(`${TEMPLATE_ENDPOINT}/${id}`);
+};
+
+export const duplicateTrainingTemplate = async (id: string): Promise<TrainingTemplate> => {
+    const response = await http.post<TrainingTemplate>(`${TEMPLATE_ENDPOINT}/${id}/duplicate`);
+    return response.data;
 };
 
 export const createSessionFromTemplate = async (

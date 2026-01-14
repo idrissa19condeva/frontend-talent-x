@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
-import { ActivityIndicator, Button, Text } from "react-native-paper";
+import { ActivityIndicator, Button, IconButton, Text } from "react-native-paper";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -148,6 +148,8 @@ export default function TrainingBlocksScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
 
+    const [scope, setScope] = useState<"personal" | "default">("personal");
+
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [blocks, setBlocks] = useState<TrainingBlock[]>([]);
@@ -160,7 +162,7 @@ export default function TrainingBlocksScreen() {
             setRefreshing(true);
         }
         try {
-            const data = await listTrainingBlocks();
+            const data = await listTrainingBlocks("library");
             setBlocks(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error("Erreur chargement blocs:", error);
@@ -170,6 +172,35 @@ export default function TrainingBlocksScreen() {
             setRefreshing(false);
         }
     }, []);
+
+    const handleOpenBlock = useCallback(
+        (block: TrainingBlock) => {
+            if (!block?.id) return;
+            if (block.isDefault) {
+                Alert.alert(
+                    "Bloc par défaut",
+                    "Ce bloc est un bloc par défaut. Duplique-le pour pouvoir le modifier.",
+                    [
+                        { text: "Annuler", style: "cancel" },
+                        {
+                            text: "Dupliquer",
+                            onPress: () => {
+                                // Open the editor in "duplicate draft" mode: no API call until the user presses "Enregistrer".
+                                router.push({
+                                    pathname: "/(main)/training/blocks/edit/[id]",
+                                    params: { id: block.id, duplicate: "1" },
+                                } as any);
+                            },
+                        },
+                    ],
+                );
+                return;
+            }
+
+            router.push(`/(main)/training/blocks/edit/${block.id}`);
+        },
+        [router],
+    );
 
     useEffect(() => {
         load({ showLoading: true });
@@ -186,17 +217,17 @@ export default function TrainingBlocksScreen() {
         load({ showLoading: false });
     };
 
-    const groupedBlocks = useMemo(() => {
+    const groupedBlocks = useCallback((source: TrainingBlock[], scopeKey: "personal" | "default") => {
         const buckets = new Map<string, TrainingBlock[]>();
 
-        for (const block of blocks) {
+        for (const block of source) {
             const rawType = block.segment?.blockType;
-            const key = typeof rawType === "string" && rawType.trim() ? rawType.trim() : "__unknown__";
-            const existing = buckets.get(key);
+            const typeKey = typeof rawType === "string" && rawType.trim() ? rawType.trim() : "__unknown__";
+            const existing = buckets.get(typeKey);
             if (existing) {
                 existing.push(block);
             } else {
-                buckets.set(key, [block]);
+                buckets.set(typeKey, [block]);
             }
         }
 
@@ -220,12 +251,24 @@ export default function TrainingBlocksScreen() {
 
         return keys
             .map((key) => ({
-                key,
+                key: `${scopeKey}:${key}`,
+                typeKey: key,
                 title: key === "__unknown__" ? "Autres" : getBlockTypeLabel(key),
                 blocks: buckets.get(key) ?? [],
             }))
             .filter((section) => section.blocks.length > 0);
-    }, [blocks]);
+    }, []);
+
+    const defaultBlocks = useMemo(() => blocks.filter((b) => Boolean(b.isDefault)), [blocks]);
+    const personalBlocks = useMemo(() => blocks.filter((b) => !b.isDefault), [blocks]);
+
+    const isPersonalView = scope === "personal";
+    const visibleBlocks = isPersonalView ? personalBlocks : defaultBlocks;
+
+    const groupedDefaultBlocks = useMemo(() => groupedBlocks(defaultBlocks, "default"), [defaultBlocks, groupedBlocks]);
+    const groupedPersonalBlocks = useMemo(() => groupedBlocks(personalBlocks, "personal"), [groupedBlocks, personalBlocks]);
+
+    const visibleGroupedBlocks = isPersonalView ? groupedPersonalBlocks : groupedDefaultBlocks;
 
     const toggleExpandedType = useCallback((key: string) => {
         setExpandedTypes((prev) => {
@@ -239,6 +282,67 @@ export default function TrainingBlocksScreen() {
         });
     }, []);
 
+    const renderGroupedSections = (sections: { key: string; title: string; blocks: TrainingBlock[] }[]) => {
+        return sections.map((section) => (
+            <View key={section.key} style={styles.section}>
+                <Pressable
+                    style={styles.sectionHeaderRow}
+                    onPress={() => toggleExpandedType(section.key)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Afficher les blocs ${section.title}`}
+                >
+                    <View style={styles.sectionHeaderLeft}>
+                        <MaterialCommunityIcons
+                            name={expandedTypes.has(section.key) ? "chevron-down" : "chevron-right"}
+                            size={18}
+                            color="#94a3b8"
+                        />
+                        <Text style={styles.sectionTitle}>{section.title}</Text>
+                    </View>
+                    <View style={styles.sectionHeaderRight}>
+                        <View style={styles.countPill}>
+                            <Text style={styles.countText}>{section.blocks.length}</Text>
+                        </View>
+                    </View>
+                </Pressable>
+                {expandedTypes.has(section.key) ? (
+                    <View style={styles.sectionBody}>
+                        {section.blocks.map((block) => {
+                            const label = getBlockTypeLabel(block.segment?.blockType);
+                            const detail = buildBlockDetail(block);
+                            return (
+                                <Pressable
+                                    key={block.id}
+                                    style={styles.card}
+                                    onPress={() => handleOpenBlock(block)}
+                                    accessibilityRole="button"
+                                >
+                                    <View style={styles.cardRow}>
+                                        <View style={styles.cardIcon}>
+                                            <MaterialCommunityIcons name="puzzle" size={20} color="#38bdf8" />
+                                        </View>
+                                        <View style={styles.cardBody}>
+                                            <View style={styles.cardTitleRow}>
+                                                <Text style={styles.cardTitle} numberOfLines={1}>
+                                                    {block.title}
+                                                </Text>
+                                                <View style={styles.typePill}>
+                                                    <Text style={styles.typePillText}>{label}</Text>
+                                                </View>
+                                            </View>
+                                            {detail ? <Text style={styles.cardDetail}>{detail}</Text> : null}
+                                        </View>
+                                        <MaterialCommunityIcons name="chevron-right" size={22} color="#94a3b8" />
+                                    </View>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
+                ) : null}
+            </View>
+        ));
+    };
+
     return (
         <ScrollView
             style={styles.scroll}
@@ -247,107 +351,84 @@ export default function TrainingBlocksScreen() {
         >
             <View style={styles.header}>
                 <Text style={styles.overline}>BLOCS</Text>
+
+                <View style={styles.scopeSwitcher}>
+                    <Button
+                        mode={isPersonalView ? "contained" : "outlined"}
+                        onPress={() => setScope("personal")}
+                        style={[styles.scopeButton, isPersonalView && styles.scopeButtonActive]}
+                        buttonColor={isPersonalView ? "#22d3ee" : "transparent"}
+                        textColor={isPersonalView ? "#021019" : "#22d3ee"}
+                    >
+                        Blocs personnels
+                    </Button>
+                    <Button
+                        mode={!isPersonalView ? "contained" : "outlined"}
+                        onPress={() => setScope("default")}
+                        style={[styles.scopeButton, !isPersonalView && styles.scopeButtonActive]}
+                        buttonColor={!isPersonalView ? "#22d3ee" : "transparent"}
+                        textColor={!isPersonalView ? "#021019" : "#22d3ee"}
+                    >
+                        Blocs par défaut
+                    </Button>
+                </View>
+
                 <View style={styles.headerTopRow}>
                     <View style={styles.headerTitleRow}>
-                        <Text style={styles.title}>Mes blocs</Text>
+                        <Text style={styles.title}>{isPersonalView ? "Mes blocs" : "Blocs par défaut"}</Text>
                         {!loading ? (
                             <View style={styles.countPill}>
-                                <Text style={styles.countText}>{blocks.length}</Text>
+                                <Text style={styles.countText}>{visibleBlocks.length}</Text>
                             </View>
                         ) : null}
                     </View>
-                    <View style={styles.headerActions}>
-                        <Button
-                            mode="contained"
-                            onPress={() => router.push("/(main)/training/blocks/new")}
-                            buttonColor="#22d3ee"
-                            textColor="#021019"
-                        >
-                            Nouveau
-                        </Button>
-                    </View>
+                    {isPersonalView ? (
+                        <View style={styles.headerActions}>
+                            <IconButton
+                                icon="plus"
+                                size={20}
+                                iconColor="#021019"
+                                containerColor="#22d3ee"
+                                onPress={() => router.push("/(main)/training/blocks/new")}
+                                accessibilityLabel="Ajouter un bloc"
+                            />
+                        </View>
+                    ) : null}
                 </View>
-                <Text style={styles.subtitle}>Crée des blocs réutilisables puis ajoute-les dans tes entraînements.</Text>
+                <Text style={styles.subtitle}>
+                    {isPersonalView
+                        ? "Crée des blocs réutilisables puis ajoute-les dans tes entraînements."
+                        : "Duplique un bloc par défaut pour créer ta version."}
+                </Text>
             </View>
 
             {loading && !refreshing ? (
                 <View style={styles.center}>
                     <ActivityIndicator />
                 </View>
-            ) : blocks.length ? (
+            ) : visibleGroupedBlocks.length ? (
                 <View style={styles.list}>
-                    {groupedBlocks.map((section) => (
-                        <View key={section.key} style={styles.section}>
-                            <Pressable
-                                style={styles.sectionHeaderRow}
-                                onPress={() => toggleExpandedType(section.key)}
-                                accessibilityRole="button"
-                                accessibilityLabel={`Afficher les blocs ${section.title}`}
-                            >
-                                <View style={styles.sectionHeaderLeft}>
-                                    <MaterialCommunityIcons
-                                        name={expandedTypes.has(section.key) ? "chevron-down" : "chevron-right"}
-                                        size={18}
-                                        color="#94a3b8"
-                                    />
-                                    <Text style={styles.sectionTitle}>{section.title}</Text>
-                                </View>
-                                <View style={styles.sectionHeaderRight}>
-                                    <View style={styles.countPill}>
-                                        <Text style={styles.countText}>{section.blocks.length}</Text>
-                                    </View>
-                                </View>
-                            </Pressable>
-                            {expandedTypes.has(section.key) ? (
-                                <View style={styles.sectionBody}>
-                                    {section.blocks.map((block) => {
-                                        const label = getBlockTypeLabel(block.segment?.blockType);
-                                        const detail = buildBlockDetail(block);
-                                        return (
-                                            <Pressable
-                                                key={block.id}
-                                                style={styles.card}
-                                                onPress={() => router.push(`/(main)/training/blocks/edit/${block.id}`)}
-                                                accessibilityRole="button"
-                                            >
-                                                <View style={styles.cardRow}>
-                                                    <View style={styles.cardIcon}>
-                                                        <MaterialCommunityIcons name="puzzle" size={20} color="#38bdf8" />
-                                                    </View>
-                                                    <View style={styles.cardBody}>
-                                                        <View style={styles.cardTitleRow}>
-                                                            <Text style={styles.cardTitle} numberOfLines={1}>
-                                                                {block.title}
-                                                            </Text>
-                                                            <View style={styles.typePill}>
-                                                                <Text style={styles.typePillText}>{label}</Text>
-                                                            </View>
-                                                        </View>
-                                                        {detail ? <Text style={styles.cardDetail}>{detail}</Text> : null}
-                                                    </View>
-                                                    <MaterialCommunityIcons name="chevron-right" size={22} color="#94a3b8" />
-                                                </View>
-                                            </Pressable>
-                                        );
-                                    })}
-                                </View>
-                            ) : null}
-                        </View>
-                    ))}
+                    {renderGroupedSections(visibleGroupedBlocks)}
                 </View>
             ) : (
                 <View style={styles.empty}>
-                    <Text style={styles.emptyTitle}>Aucun bloc</Text>
-                    <Text style={styles.emptyText}>Crée ton premier bloc.</Text>
-                    <Button
-                        mode="contained"
-                        onPress={() => router.push("/(main)/training/blocks/new")}
-                        buttonColor="#22d3ee"
-                        textColor="#021019"
-                        style={{ marginTop: 12 }}
-                    >
-                        Créer un bloc
-                    </Button>
+                    <Text style={styles.emptyTitle}>{isPersonalView ? "Aucun bloc" : "Aucun bloc par défaut"}</Text>
+                    {isPersonalView ? (
+                        <>
+                            <Text style={styles.emptyText}>Crée ton premier bloc.</Text>
+                            <Button
+                                mode="contained"
+                                onPress={() => router.push("/(main)/training/blocks/new")}
+                                buttonColor="#22d3ee"
+                                textColor="#021019"
+                                style={{ marginTop: 12 }}
+                            >
+                                Créer un bloc
+                            </Button>
+                        </>
+                    ) : (
+                        <Text style={styles.emptyText}>Aucun bloc par défaut n’est disponible.</Text>
+                    )}
                 </View>
             )}
         </ScrollView>
@@ -366,6 +447,20 @@ const styles = StyleSheet.create({
     header: {
         gap: 8,
         paddingTop: 4,
+    },
+    scopeSwitcher: {
+        flexDirection: "row",
+        gap: 8,
+        backgroundColor: "rgba(14,165,233,0.08)",
+        borderRadius: 999,
+        padding: 4,
+    },
+    scopeButton: {
+        flex: 1,
+        borderRadius: 999,
+    },
+    scopeButtonActive: {
+        elevation: 0,
     },
     overline: {
         color: "#38bdf8",
@@ -487,7 +582,7 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     cardTitle: {
-        fontSize: 16,
+        fontSize: 14,
         fontWeight: "700",
         color: "#f8fafc",
         flex: 1,

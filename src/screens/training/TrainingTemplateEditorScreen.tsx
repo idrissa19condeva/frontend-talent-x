@@ -17,7 +17,12 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { trainingBlockCatalog, trainingTypeOptions, buildTrainingSeriesBlock, buildTrainingSeriesSegment } from "../../hooks/useTrainingForm";
 import { useTrainingTemplateForm } from "../../hooks/useTrainingTemplateForm";
-import { createTrainingTemplate, getTrainingTemplate, updateTrainingTemplate } from "../../api/trainingTemplateService";
+import {
+    createTrainingTemplate,
+    deleteTrainingTemplate,
+    getTrainingTemplate,
+    updateTrainingTemplate,
+} from "../../api/trainingTemplateService";
 import { listTrainingBlocks } from "../../api/trainingBlockService";
 import {
     DISTANCE_PACE_REFERENCE_OPTIONS,
@@ -241,6 +246,7 @@ export default function TrainingTemplateEditorScreen() {
     const params = useLocalSearchParams();
     const templateId = asString(params.id);
     const returnKey = asString(params.returnKey);
+    const duplicateParam = asString(params.duplicate);
     const isEditing = Boolean(templateId);
 
     const { values, setField, hydrate, canSubmit, normalize } = useTrainingTemplateForm();
@@ -248,6 +254,9 @@ export default function TrainingTemplateEditorScreen() {
     const [loading, setLoading] = useState(false);
     const [prefillLoading, setPrefillLoading] = useState(false);
     const [prefillError, setPrefillError] = useState<string | null>(null);
+    const [isDefaultTemplate, setIsDefaultTemplate] = useState(false);
+    const [duplicateDraftEnabled, setDuplicateDraftEnabled] = useState(false);
+    const [submitArmed, setSubmitArmed] = useState(false);
 
     const [addBlockChooser, setAddBlockChooser] = useState<
         | { visible: true; serieId: string }
@@ -334,8 +343,23 @@ export default function TrainingTemplateEditorScreen() {
         | { visible: false }
     >({ visible: false });
 
+    const [myBlocksPickerExpandedSections, setMyBlocksPickerExpandedSections] = useState<Set<"personal" | "default">>(
+        () => new Set(),
+    );
+
+    const [myBlocksPickerExpandedTypes, setMyBlocksPickerExpandedTypes] = useState<Set<string>>(() => new Set());
+
     const [expandedExerciseDropdowns, setExpandedExerciseDropdowns] = useState<Set<string>>(() => new Set());
 
+    useEffect(() => {
+        if (myBlocksPicker.visible) {
+            // Default state: everything collapsed.
+            setMyBlocksPickerExpandedSections(new Set());
+            setMyBlocksPickerExpandedTypes(new Set());
+        }
+    }, [myBlocksPicker.visible]);
+
+    const isEditingDefault = isEditing && isDefaultTemplate;
     const title = isEditing ? "Modifier le template" : "Nouveau template";
     const submitLabel = isEditing ? "Mettre à jour" : "Créer";
 
@@ -362,6 +386,7 @@ export default function TrainingTemplateEditorScreen() {
     }, [values.series]);
 
     const scrollPaddingBottom = Math.max(insets.bottom, 0) + 24;
+    const fixedHeaderHeight = 56;
 
     const updateSeries = useCallback(
         (serieId: string, updater: (serie: TrainingSeries) => TrainingSeries) => {
@@ -399,6 +424,30 @@ export default function TrainingTemplateEditorScreen() {
             const next = new Set(prev);
             if (next.has(key)) next.delete(key);
             else next.add(key);
+            return next;
+        });
+    }, []);
+
+    const toggleMyBlocksPickerSection = useCallback((key: "personal" | "default") => {
+        setMyBlocksPickerExpandedSections((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) {
+                next.delete(key);
+            } else {
+                next.add(key);
+            }
+            return next;
+        });
+    }, []);
+
+    const toggleMyBlocksPickerType = useCallback((key: string) => {
+        setMyBlocksPickerExpandedTypes((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) {
+                next.delete(key);
+            } else {
+                next.add(key);
+            }
             return next;
         });
     }, []);
@@ -644,7 +693,7 @@ export default function TrainingTemplateEditorScreen() {
     const openMyBlocksPicker = useCallback(async (serieId: string) => {
         setMyBlocksPicker({ visible: true, serieId, loading: true, blocks: [] });
         try {
-            const blocks = await listTrainingBlocks();
+            const blocks = await listTrainingBlocks("library");
             setMyBlocksPicker({ visible: true, serieId, loading: false, blocks: Array.isArray(blocks) ? blocks : [] });
         } catch (error) {
             console.error("Erreur chargement blocs:", error);
@@ -830,6 +879,69 @@ export default function TrainingTemplateEditorScreen() {
     }, [seriesRestSeconds]);
 
     const myBlocksPickerSerieId = myBlocksPicker.visible ? myBlocksPicker.serieId : undefined;
+
+    const myBlocksPickerGroupedBlocks = useMemo(() => {
+        if (!myBlocksPicker.visible) {
+            return { personal: [] as TrainingBlock[], defaults: [] as TrainingBlock[] };
+        }
+
+        const sorted = [...(myBlocksPicker.blocks || [])].sort((a, b) =>
+            (a.title || "").localeCompare(b.title || "", "fr", { sensitivity: "base" }),
+        );
+
+        return {
+            personal: sorted.filter((block) => !block.isDefault),
+            defaults: sorted.filter((block) => Boolean(block.isDefault)),
+        };
+    }, [myBlocksPicker]);
+
+    const myBlocksPickerGroupedBlocksByType = useMemo(() => {
+        const getTypeKey = (block: TrainingBlock) => {
+            const rawType = block.segment?.blockType;
+            return typeof rawType === "string" && rawType.trim() ? rawType.trim() : "__unknown__";
+        };
+
+        const getTypeLabel = (typeKey: string) => {
+            if (typeKey === "__unknown__") return "Autres";
+            return trainingBlockCatalog.find((c) => c.type === (typeKey as any))?.label || typeKey;
+        };
+
+        const group = (source: TrainingBlock[], scopeKey: "personal" | "default") => {
+            const buckets = new Map<string, TrainingBlock[]>();
+            for (const block of source) {
+                const key = getTypeKey(block);
+                const existing = buckets.get(key);
+                if (existing) existing.push(block);
+                else buckets.set(key, [block]);
+            }
+
+            for (const list of buckets.values()) {
+                list.sort((a, b) => (a.title || "").localeCompare(b.title || "", "fr", { sensitivity: "base" }));
+            }
+
+            const order = new Map<string, number>(trainingBlockCatalog.map((item, index) => [item.type, index]));
+            const keys = Array.from(buckets.keys());
+            keys.sort((a, b) => {
+                const aOrder = order.has(a) ? order.get(a)! : Number.POSITIVE_INFINITY;
+                const bOrder = order.has(b) ? order.get(b)! : Number.POSITIVE_INFINITY;
+                if (aOrder !== bOrder) return aOrder - bOrder;
+                return getTypeLabel(a).localeCompare(getTypeLabel(b), "fr", { sensitivity: "base" });
+            });
+
+            return keys
+                .map((typeKey) => ({
+                    key: `${scopeKey}:${typeKey}`,
+                    title: getTypeLabel(typeKey),
+                    blocks: buckets.get(typeKey) ?? [],
+                }))
+                .filter((section) => section.blocks.length > 0);
+        };
+
+        return {
+            personal: group(myBlocksPickerGroupedBlocks.personal, "personal"),
+            defaults: group(myBlocksPickerGroupedBlocks.defaults, "default"),
+        };
+    }, [myBlocksPickerGroupedBlocks.defaults, myBlocksPickerGroupedBlocks.personal]);
 
     const confirmSeriesRestPicker = useCallback(() => {
         if (!seriesRestPicker.visible) return;
@@ -1020,7 +1132,10 @@ export default function TrainingTemplateEditorScreen() {
         [updateSeries],
     );
 
-    const canEdit = useMemo(() => !loading && !prefillLoading, [loading, prefillLoading]);
+    const canEdit = useMemo(
+        () => !loading && !prefillLoading && (!isDefaultTemplate || duplicateDraftEnabled),
+        [duplicateDraftEnabled, isDefaultTemplate, loading, prefillLoading],
+    );
 
     const loadTemplate = useCallback(async () => {
         if (!templateId) return;
@@ -1028,6 +1143,7 @@ export default function TrainingTemplateEditorScreen() {
         setPrefillError(null);
         try {
             const template = await getTrainingTemplate(templateId);
+            setIsDefaultTemplate(Boolean(template.isDefault));
             hydrate({
                 title: template.title,
                 type: template.type,
@@ -1049,16 +1165,78 @@ export default function TrainingTemplateEditorScreen() {
     useEffect(() => {
         if (isEditing) {
             loadTemplate();
+        } else {
+            setIsDefaultTemplate(false);
         }
     }, [isEditing, loadTemplate]);
 
+    useEffect(() => {
+        // Prevent tap-through right after navigation (e.g. pressing "Dupliquer" then the same tap hits "Mettre à jour").
+        // Arm submit shortly after the screen is stable.
+        setSubmitArmed(false);
+        const timer = setTimeout(() => setSubmitArmed(true), 350);
+        return () => clearTimeout(timer);
+    }, [templateId]);
+
+    useEffect(() => {
+        // If we arrived from a "Dupliquer" action, enable the draft mode immediately.
+        setDuplicateDraftEnabled(duplicateParam === "1" || duplicateParam === "true");
+    }, [duplicateParam]);
+
+    const handleDuplicateDefault = useCallback(() => {
+        // Draft mode: allow editing the default template without saving anything yet.
+        // The actual copy will be created when the user presses "Mettre à jour".
+        setDuplicateDraftEnabled(true);
+    }, []);
+
+    const handleDeleteTemplate = useCallback(() => {
+        if (!templateId) return;
+        if (isDefaultTemplate) {
+            Alert.alert(
+                "Template par défaut",
+                "Tu ne peux pas supprimer un template par défaut. Duplique-le pour créer ta version.",
+            );
+            return;
+        }
+
+        Alert.alert("Supprimer", "Supprimer ce template ?", [
+            { text: "Annuler", style: "cancel" },
+            {
+                text: "Supprimer",
+                style: "destructive",
+                onPress: async () => {
+                    setLoading(true);
+                    try {
+                        await deleteTrainingTemplate(templateId);
+                        router.replace("/(main)/training/templates");
+                    } catch (e: any) {
+                        Alert.alert("Erreur", e?.message || "Impossible de supprimer ce template");
+                    } finally {
+                        setLoading(false);
+                    }
+                },
+            },
+        ]);
+    }, [isDefaultTemplate, router, templateId]);
+
     const handleSubmit = useCallback(async () => {
+        if (!submitArmed) return;
         if (!canSubmit || !canEdit) return;
         setLoading(true);
         try {
             const payload = normalize(values);
-            if (isEditing && templateId) {
+            if (isEditing && templateId && !(isDefaultTemplate && duplicateDraftEnabled)) {
                 await updateTrainingTemplate(templateId, payload);
+                if (returnKey) {
+                    setNavigationResult(returnKey, { templateId, title: payload.title });
+                    if (router.canGoBack?.()) {
+                        router.back();
+                    } else {
+                        router.replace({ pathname: "/(main)/training/create", params: { templateId } } as never);
+                    }
+                    return;
+                }
+
                 Alert.alert("Template mis à jour", "Les modifications ont été enregistrées.");
                 router.replace("/(main)/training/templates");
                 return;
@@ -1082,7 +1260,7 @@ export default function TrainingTemplateEditorScreen() {
         } finally {
             setLoading(false);
         }
-    }, [canEdit, canSubmit, isEditing, normalize, router, templateId, values, returnKey]);
+    }, [canEdit, canSubmit, duplicateDraftEnabled, isDefaultTemplate, isEditing, normalize, router, submitArmed, templateId, values, returnKey]);
 
     if (prefillLoading && isEditing) {
         return (
@@ -1115,11 +1293,69 @@ export default function TrainingTemplateEditorScreen() {
                 behavior={Platform.OS === "ios" ? "padding" : undefined}
                 keyboardVerticalOffset={Math.max(insets.top, 16) + 56}
             >
+                <View
+                    style={[
+                        styles.fixedHeader,
+                        { paddingTop: 0, height: fixedHeaderHeight },
+                    ]}
+                >
+                    <View style={styles.fixedHeaderActions}>
+                        {isEditing && !isDefaultTemplate ? (
+                            <Button
+                                mode="outlined"
+                                onPress={handleDeleteTemplate}
+                                disabled={loading || prefillLoading}
+                                textColor="#f87171"
+                                style={styles.deleteHeaderButton}
+                                compact
+                                labelStyle={styles.fixedHeaderButtonLabel}
+                            >
+                                Supprimer
+                            </Button>
+                        ) : (
+                            <View />
+                        )}
+
+                        <View style={styles.fixedHeaderPrimaryActions}>
+                            <Button
+                                mode="outlined"
+                                onPress={() =>
+                                    router.canGoBack?.() ? router.back() : router.replace("/(main)/training/templates")
+                                }
+                                textColor="#cbd5e1"
+                                disabled={loading}
+                                compact
+                                style={styles.fixedHeaderButton}
+                                labelStyle={styles.fixedHeaderButtonLabel}
+                            >
+                                Annuler
+                            </Button>
+                            <Button
+                                mode="contained"
+                                onPress={isEditingDefault && !duplicateDraftEnabled ? handleDuplicateDefault : handleSubmit}
+                                buttonColor="#22d3ee"
+                                textColor="#02111f"
+                                disabled={loading || !submitArmed || (!canSubmit || !canEdit)}
+                                loading={loading}
+                                compact
+                                style={styles.fixedHeaderButton}
+                                contentStyle={styles.fixedHeaderPrimaryButtonContent}
+                                labelStyle={styles.fixedHeaderPrimaryButtonLabel}
+                            >
+                                {submitLabel}
+                            </Button>
+                        </View>
+                    </View>
+                </View>
+
                 <ScrollView
                     style={styles.scroll}
                     contentContainerStyle={[
                         styles.container,
-                        { paddingTop: insets.top + 10, paddingBottom: scrollPaddingBottom },
+                        {
+                            paddingTop: fixedHeaderHeight + 10,
+                            paddingBottom: scrollPaddingBottom,
+                        },
                     ]}
                     keyboardShouldPersistTaps="handled"
                 >
@@ -1127,6 +1363,24 @@ export default function TrainingTemplateEditorScreen() {
                         <Text style={styles.title}>{title}</Text>
                         <Text style={styles.subtitle}>Crée un template que tu pourras réutiliser.</Text>
                     </View>
+
+                    {isEditing && isDefaultTemplate && !duplicateDraftEnabled ? (
+                        <View style={styles.defaultBanner}>
+                            <Text style={styles.defaultBannerTitle}>Template par défaut</Text>
+                            <Text style={styles.defaultBannerText}>
+                                Ce template est en lecture seule. Duplique-le pour pouvoir le modifier.
+                            </Text>
+                            <Button
+                                mode="contained"
+                                onPress={handleDuplicateDefault}
+                                buttonColor="#22d3ee"
+                                textColor="#02111f"
+                                disabled={loading || prefillLoading}
+                            >
+                                Dupliquer pour modifier
+                            </Button>
+                        </View>
+                    ) : null}
 
                     <View style={styles.card}>
                         <Text style={styles.cardTitle}>Infos</Text>
@@ -1178,7 +1432,7 @@ export default function TrainingTemplateEditorScreen() {
                         <View style={styles.cardHeaderRow}>
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.cardTitle}>Séries & blocs</Text>
-                                <Text style={styles.cardSubtitle}>Construis ton plan d'entraînement</Text>
+                                <Text style={styles.cardSubtitle}>Construis ton plan d’entraînement</Text>
                             </View>
                             <Button
                                 mode="outlined"
@@ -2095,28 +2349,6 @@ export default function TrainingTemplateEditorScreen() {
                         ))}
                     </View>
 
-                    <View style={styles.footer}>
-                        <Button
-                            mode="outlined"
-                            onPress={() =>
-                                router.canGoBack?.() ? router.back() : router.replace("/(main)/training/templates")
-                            }
-                            textColor="#cbd5e1"
-                            disabled={loading}
-                        >
-                            Annuler
-                        </Button>
-                        <Button
-                            mode="contained"
-                            onPress={handleSubmit}
-                            buttonColor="#22d3ee"
-                            textColor="#02111f"
-                            disabled={!canSubmit || !canEdit}
-                            loading={loading}
-                        >
-                            {submitLabel}
-                        </Button>
-                    </View>
                 </ScrollView>
             </KeyboardAvoidingView>
 
@@ -2826,28 +3058,177 @@ export default function TrainingTemplateEditorScreen() {
                             </View>
                         ) : null}
                         {myBlocksPicker.visible && !myBlocksPicker.loading ? (
-                            <ScrollView style={styles.modalScroll} contentContainerStyle={{ paddingBottom: 12 }}>
-                                {(myBlocksPicker.blocks || []).length ? (
-                                    myBlocksPicker.blocks.map((block) => (
-                                        <Pressable
-                                            key={block.id}
-                                            style={styles.modalItem}
-                                            onPress={() => {
-                                                const serieId = myBlocksPickerSerieId;
-                                                if (serieId) {
-                                                    handleAddSegmentFromBlock(serieId, block);
-                                                }
-                                                closeMyBlocksPicker();
-                                            }}
-                                        >
-                                            <Text style={styles.modalItemText}>{block.title}</Text>
-                                            <Text style={[styles.modalItemText, { color: "#94a3b8", fontSize: 12, marginTop: 2 }]}>
-                                                {(trainingBlockCatalog.find((c) => c.type === (block.segment?.blockType as any))?.label) ||
-                                                    block.segment?.blockType ||
-                                                    "Bloc"}
-                                            </Text>
-                                        </Pressable>
-                                    ))
+                            <ScrollView
+                                style={styles.modalScroll}
+                                contentContainerStyle={[styles.modalScrollContent, { paddingBottom: 12 }]}
+                            >
+                                {myBlocksPickerGroupedBlocks.personal.length || myBlocksPickerGroupedBlocks.defaults.length ? (
+                                    <>
+                                        {myBlocksPickerGroupedBlocks.personal.length ? (
+                                            <>
+                                                <Pressable
+                                                    style={styles.pickerSectionHeaderRow}
+                                                    onPress={() => toggleMyBlocksPickerSection("personal")}
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel="Afficher les blocs personnels"
+                                                >
+                                                    <View style={styles.pickerSectionHeaderLeft}
+                                                    >
+                                                        <MaterialCommunityIcons
+                                                            name={
+                                                                myBlocksPickerExpandedSections.has("personal")
+                                                                    ? "chevron-down"
+                                                                    : "chevron-right"
+                                                            }
+                                                            size={18}
+                                                            color="#94a3b8"
+                                                        />
+                                                        <Text style={styles.pickerSectionTitle}>Blocs personnels</Text>
+                                                    </View>
+                                                    <View style={styles.pickerSectionHeaderRight}>
+                                                        <View style={styles.pickerCountPill}>
+                                                            <Text style={styles.pickerCountText}>
+                                                                {myBlocksPickerGroupedBlocks.personal.length}
+                                                            </Text>
+                                                        </View>
+                                                    </View>
+                                                </Pressable>
+
+                                                {myBlocksPickerExpandedSections.has("personal")
+                                                    ? myBlocksPickerGroupedBlocksByType.personal.map((section) => (
+                                                        <View key={section.key} style={{ gap: 6 }}>
+                                                            <Pressable
+                                                                style={styles.pickerTypeHeaderRow}
+                                                                onPress={() => toggleMyBlocksPickerType(section.key)}
+                                                                accessibilityRole="button"
+                                                                accessibilityLabel={`Afficher les blocs ${section.title}`}
+                                                            >
+                                                                <View style={styles.pickerTypeHeaderLeft}>
+                                                                    <MaterialCommunityIcons
+                                                                        name={
+                                                                            myBlocksPickerExpandedTypes.has(section.key)
+                                                                                ? "chevron-down"
+                                                                                : "chevron-right"
+                                                                        }
+                                                                        size={18}
+                                                                        color="#94a3b8"
+                                                                    />
+                                                                    <Text style={styles.pickerTypeTitle}>{section.title}</Text>
+                                                                </View>
+                                                                <View style={styles.pickerTypeHeaderRight}>
+                                                                    <View style={styles.pickerTypeCountPill}>
+                                                                        <Text style={styles.pickerTypeCountText}>{section.blocks.length}</Text>
+                                                                    </View>
+                                                                </View>
+                                                            </Pressable>
+
+                                                            {myBlocksPickerExpandedTypes.has(section.key)
+                                                                ? section.blocks.map((block) => (
+                                                                    <Pressable
+                                                                        key={block.id}
+                                                                        style={styles.modalItem}
+                                                                        onPress={() => {
+                                                                            const serieId = myBlocksPickerSerieId;
+                                                                            if (serieId) {
+                                                                                handleAddSegmentFromBlock(serieId, block);
+                                                                            }
+                                                                            closeMyBlocksPicker();
+                                                                        }}
+                                                                    >
+                                                                        <Text style={styles.modalItemText}>{block.title}</Text>
+                                                                    </Pressable>
+                                                                ))
+                                                                : null}
+                                                        </View>
+                                                    ))
+                                                    : null}
+                                            </>
+                                        ) : null}
+
+                                        {myBlocksPickerGroupedBlocks.defaults.length ? (
+                                            <>
+                                                {myBlocksPickerGroupedBlocks.personal.length ? (
+                                                    <View style={{ height: 6 }} />
+                                                ) : null}
+                                                <Pressable
+                                                    style={styles.pickerSectionHeaderRow}
+                                                    onPress={() => toggleMyBlocksPickerSection("default")}
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel="Afficher les blocs par défaut"
+                                                >
+                                                    <View style={styles.pickerSectionHeaderLeft}
+                                                    >
+                                                        <MaterialCommunityIcons
+                                                            name={
+                                                                myBlocksPickerExpandedSections.has("default")
+                                                                    ? "chevron-down"
+                                                                    : "chevron-right"
+                                                            }
+                                                            size={18}
+                                                            color="#94a3b8"
+                                                        />
+                                                        <Text style={styles.pickerSectionTitle}>Blocs par défaut</Text>
+                                                    </View>
+                                                    <View style={styles.pickerSectionHeaderRight}>
+                                                        <View style={styles.pickerCountPill}>
+                                                            <Text style={styles.pickerCountText}>
+                                                                {myBlocksPickerGroupedBlocks.defaults.length}
+                                                            </Text>
+                                                        </View>
+                                                    </View>
+                                                </Pressable>
+
+                                                {myBlocksPickerExpandedSections.has("default")
+                                                    ? myBlocksPickerGroupedBlocksByType.defaults.map((section) => (
+                                                        <View key={section.key} style={{ gap: 6 }}>
+                                                            <Pressable
+                                                                style={styles.pickerTypeHeaderRow}
+                                                                onPress={() => toggleMyBlocksPickerType(section.key)}
+                                                                accessibilityRole="button"
+                                                                accessibilityLabel={`Afficher les blocs ${section.title}`}
+                                                            >
+                                                                <View style={styles.pickerTypeHeaderLeft}>
+                                                                    <MaterialCommunityIcons
+                                                                        name={
+                                                                            myBlocksPickerExpandedTypes.has(section.key)
+                                                                                ? "chevron-down"
+                                                                                : "chevron-right"
+                                                                        }
+                                                                        size={18}
+                                                                        color="#94a3b8"
+                                                                    />
+                                                                    <Text style={styles.pickerTypeTitle}>{section.title}</Text>
+                                                                </View>
+                                                                <View style={styles.pickerTypeHeaderRight}>
+                                                                    <View style={styles.pickerTypeCountPill}>
+                                                                        <Text style={styles.pickerTypeCountText}>{section.blocks.length}</Text>
+                                                                    </View>
+                                                                </View>
+                                                            </Pressable>
+
+                                                            {myBlocksPickerExpandedTypes.has(section.key)
+                                                                ? section.blocks.map((block) => (
+                                                                    <Pressable
+                                                                        key={block.id}
+                                                                        style={styles.modalItem}
+                                                                        onPress={() => {
+                                                                            const serieId = myBlocksPickerSerieId;
+                                                                            if (serieId) {
+                                                                                handleAddSegmentFromBlock(serieId, block);
+                                                                            }
+                                                                            closeMyBlocksPicker();
+                                                                        }}
+                                                                    >
+                                                                        <Text style={styles.modalItemText}>{block.title}</Text>
+                                                                    </Pressable>
+                                                                ))
+                                                                : null}
+                                                        </View>
+                                                    ))
+                                                    : null}
+                                            </>
+                                        ) : null}
+                                    </>
                                 ) : (
                                     <Text style={{ color: "#94a3b8" }}>Aucun bloc enregistré.</Text>
                                 )}
@@ -2878,6 +3259,77 @@ const styles = StyleSheet.create({
     },
     header: {
         gap: 8,
+    },
+    fixedHeader: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 20,
+        paddingHorizontal: 8,
+        justifyContent: "flex-end",
+        backgroundColor: "#020617",
+        borderBottomWidth: 1,
+        borderBottomColor: "rgba(255,255,255,0.06)",
+    },
+    fixedHeaderActions: {
+        height: 56,
+        flexDirection: "row",
+        justifyContent: "space-between",
+        gap: 8,
+        alignItems: "center",
+    },
+    fixedHeaderPrimaryActions: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 10,
+        flexGrow: 1,
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    fixedHeaderButton: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    fixedHeaderButtonLabel: {
+        fontSize: 12,
+        marginHorizontal: 10,
+    },
+    fixedHeaderPrimaryButtonContent: {
+        paddingHorizontal: 10,
+    },
+    fixedHeaderPrimaryButtonLabel: {
+        fontSize: 12,
+        marginHorizontal: 0,
+    },
+    defaultBanner: {
+        borderRadius: 20,
+        padding: 14,
+        backgroundColor: "rgba(15,23,42,0.75)",
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.05)",
+        gap: 10,
+    },
+    defaultBannerTitle: {
+        color: "#f8fafc",
+        fontSize: 16,
+        fontWeight: "700",
+        textAlign: "center",
+    },
+    defaultBannerText: {
+        color: "#cbd5e1",
+        lineHeight: 20,
+        textAlign: "center",
+    },
+    deleteButton: {
+        borderColor: "rgba(248,113,113,0.5)",
+        width: "100%",
+    },
+    deleteHeaderButton: {
+        borderColor: "rgba(248,113,113,0.5)",
+        flexShrink: 1,
+        minWidth: 0,
     },
     title: {
         fontSize: 28,
@@ -3264,6 +3716,94 @@ const styles = StyleSheet.create({
     modalScrollContent: {
         padding: 8,
         gap: 6,
+    },
+    pickerSectionHeaderRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+        paddingHorizontal: 2,
+        paddingVertical: 6,
+    },
+    pickerSectionHeaderLeft: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        flex: 1,
+        minWidth: 0,
+    },
+    pickerSectionHeaderRight: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    pickerSectionTitle: {
+        color: "#e2e8f0",
+        fontSize: 13,
+        fontWeight: "800",
+        letterSpacing: 0.6,
+        textTransform: "uppercase",
+        flex: 1,
+    },
+    pickerTypeTitle: {
+        color: "#cbd5e1",
+        fontSize: 12,
+        fontWeight: "700",
+        letterSpacing: 0,
+        textTransform: "none",
+        flex: 1,
+    },
+    pickerTypeHeaderRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        marginTop: 4,
+        marginLeft: 16,
+        borderRadius: 12,
+        backgroundColor: "rgba(15,23,42,0.35)",
+        borderWidth: 1,
+        borderColor: "rgba(255,255,255,0.05)",
+    },
+    pickerTypeHeaderLeft: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        flex: 1,
+        minWidth: 0,
+    },
+    pickerTypeHeaderRight: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    pickerTypeCountPill: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 999,
+        backgroundColor: "rgba(148,163,184,0.08)",
+        borderWidth: 1,
+        borderColor: "rgba(148,163,184,0.18)",
+    },
+    pickerTypeCountText: {
+        color: "#94a3b8",
+        fontWeight: "800",
+        fontSize: 11,
+    },
+    pickerCountPill: {
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 999,
+        backgroundColor: "rgba(148,163,184,0.12)",
+        borderWidth: 1,
+        borderColor: "rgba(148,163,184,0.25)",
+    },
+    pickerCountText: {
+        color: "#e2e8f0",
+        fontWeight: "800",
+        fontSize: 12,
     },
     modalOption: {
         borderRadius: 12,

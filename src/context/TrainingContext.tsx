@@ -14,6 +14,7 @@ import {
 } from "../api/trainingService";
 import { CreateTrainingSessionPayload, TrainingChronoInput, TrainingSession } from "../types/training";
 import { useAuth } from "./AuthContext";
+import { cancelSessionStartReminder, scheduleSessionStartReminder } from "../utils/sessionReminders";
 
 interface TrainingContextValue {
     sessions: Record<string, TrainingSession>;
@@ -40,6 +41,7 @@ const TrainingContext = createContext<TrainingContextValue | undefined>(undefine
 export const TrainingProvider = ({ children }: { children: React.ReactNode }) => {
     const { user } = useAuth();
     const authUserId = user?._id || user?.id || null;
+    const notificationsEnabled = Boolean((user as any)?.notificationsEnabled);
     const [sessions, setSessions] = useState<Record<string, TrainingSession>>({});
     const [ownedSessionIds, setOwnedSessionIds] = useState<string[]>([]);
     const [participatingSessionIds, setParticipatingSessionIds] = useState<string[]>([]);
@@ -54,6 +56,35 @@ export const TrainingProvider = ({ children }: { children: React.ReactNode }) =>
         setParticipatingSessionsLoaded(false);
     }, [authUserId]);
 
+    const isUserInSession = useCallback(
+        (session: TrainingSession) => {
+            if (!authUserId) return false;
+            if (session.athleteId === authUserId) return true;
+            const participants = Array.isArray(session.participants) ? session.participants : [];
+            return participants.some((p) => {
+                const u = (p as any)?.user;
+                if (!u) return false;
+                if (typeof u === "string") return u === authUserId;
+                return u.id === authUserId || u._id === authUserId;
+            });
+        },
+        [authUserId]
+    );
+
+    const syncSessionReminder = useCallback(
+        async (session: TrainingSession) => {
+            if (!session?.id) return;
+
+            if (!notificationsEnabled || !isUserInSession(session) || session.status !== "planned") {
+                await cancelSessionStartReminder(session.id);
+                return;
+            }
+
+            await scheduleSessionStartReminder(session, 30);
+        },
+        [notificationsEnabled, isUserInSession]
+    );
+
     const mergeSession = useCallback((session: TrainingSession) => {
         setSessions((prev) => ({ ...prev, [session.id]: session }));
     }, []);
@@ -64,18 +95,20 @@ export const TrainingProvider = ({ children }: { children: React.ReactNode }) =>
             mergeSession(created);
             setOwnedSessionIds((prev) => (prev.includes(created.id) ? prev : [created.id, ...prev]));
             setOwnedSessionsLoaded(true);
+            await syncSessionReminder(created);
             return created;
         },
-        [mergeSession]
+        [mergeSession, syncSessionReminder]
     );
 
     const fetchSession = useCallback(
         async (id: string) => {
             const fetched = await getTrainingSession(id);
             mergeSession(fetched);
+            await syncSessionReminder(fetched);
             return fetched;
         },
-        [mergeSession]
+        [mergeSession, syncSessionReminder]
     );
 
     const fetchAllSessions = useCallback(async () => {
@@ -89,8 +122,10 @@ export const TrainingProvider = ({ children }: { children: React.ReactNode }) =>
         });
         setOwnedSessionIds(fetched.map((session) => session.id));
         setOwnedSessionsLoaded(true);
+
+        await Promise.all(fetched.map((session) => syncSessionReminder(session)));
         return fetched;
-    }, []);
+    }, [syncSessionReminder]);
 
     const fetchParticipantSessions = useCallback(async () => {
         const fetched = await listParticipatingSessions();
@@ -103,20 +138,24 @@ export const TrainingProvider = ({ children }: { children: React.ReactNode }) =>
         });
         setParticipatingSessionIds(fetched.map((session) => session.id));
         setParticipatingSessionsLoaded(true);
+
+        await Promise.all(fetched.map((session) => syncSessionReminder(session)));
         return fetched;
-    }, []);
+    }, [syncSessionReminder]);
 
     const updateSession = useCallback(
         async (id: string, payload: CreateTrainingSessionPayload) => {
             const updated = await updateTrainingSession(id, payload);
             mergeSession(updated);
+            await syncSessionReminder(updated);
             return updated;
         },
-        [mergeSession]
+        [mergeSession, syncSessionReminder]
     );
 
     const deleteSession = useCallback(async (id: string) => {
         await deleteTrainingSession(id);
+        await cancelSessionStartReminder(id);
         setSessions((prev) => {
             if (!prev[id]) return prev;
             const next = { ...prev };
@@ -133,9 +172,10 @@ export const TrainingProvider = ({ children }: { children: React.ReactNode }) =>
             mergeSession(updated);
             setParticipatingSessionIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
             setParticipatingSessionsLoaded(true);
+            await syncSessionReminder(updated);
             return updated;
         },
-        [mergeSession]
+        [mergeSession, syncSessionReminder]
     );
 
     const leaveSession = useCallback(
@@ -143,6 +183,7 @@ export const TrainingProvider = ({ children }: { children: React.ReactNode }) =>
             const updated = await leaveTrainingSession(id);
             mergeSession(updated);
             setParticipatingSessionIds((prev) => prev.filter((sessionId) => sessionId !== id));
+            await cancelSessionStartReminder(id);
             return updated;
         },
         [mergeSession]

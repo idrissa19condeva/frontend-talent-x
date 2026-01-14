@@ -48,6 +48,8 @@ export const trainingBlockTypeDefaults: Record<TrainingBlockType, Partial<Traini
     ppg: {
         blockName: "PPG",
         blockType: "ppg",
+        distance: 0,
+        repetitions: 1,
         ppgExercises: [],
         ppgMode: "time",
         ppgRepetitions: 10,
@@ -55,17 +57,23 @@ export const trainingBlockTypeDefaults: Record<TrainingBlockType, Partial<Traini
     muscu: {
         blockName: "Muscu",
         blockType: "muscu",
+        distance: 0,
+        repetitions: 1,
         muscuExercises: [],
         muscuRepetitions: 10,
     },
     start: {
         blockName: "Starting Block",
         blockType: "start",
+        distance: 0,
+        repetitions: 1,
         startCount: 3,
     },
     recup: {
         blockName: "Récup",
         blockType: "recup",
+        distance: 0,
+        repetitions: 1,
         recoveryMode: "marche",
     },
     custom: {
@@ -177,7 +185,9 @@ export const useTrainingForm = (athleteId: string, defaults?: Partial<CreateTrai
             (values.place ?? "").trim()
         );
         const hasTiming = Boolean((values.startTime ?? "").trim()) && (values.durationMinutes ?? 0) > 0;
-        const hasSeriesRest = (values.seriesRestInterval ?? 0) > 0;
+        const hasSeriesRest = typeof values.seriesRestInterval !== "number" || Number.isNaN(values.seriesRestInterval)
+            ? false
+            : (values.seriesRestInterval ?? 0) >= 0;
         const hasSeries = values.series && values.series.length > 0;
         const seriesValid = hasSeries
             ? values.series.every((serie) => {
@@ -191,7 +201,7 @@ export const useTrainingForm = (athleteId: string, defaults?: Partial<CreateTrai
                     const requiresDistance =
                         blockType !== "custom" || (metricEnabled && metricKind === "distance");
                     const hasDistance = requiresDistance ? segment.distance > 0 : true;
-                    const hasRest = segment.restInterval > 0;
+                    const hasRest = typeof segment.restInterval === "number" && !Number.isNaN(segment.restInterval) && segment.restInterval >= 0;
                     const requireReps = segments.length === 1;
                     const repsValid = requireReps ? (segment.repetitions ?? 0) > 0 : true;
                     const exerciseCount = Array.isArray(segment.customExercises)
