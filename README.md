@@ -1,50 +1,53 @@
-# Welcome to your Expo app 👋
+# TrackNField Mobile (Expo)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
-
-## Get started
-
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Installation
 
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Environnements (DEV / PROD)
 
-## Learn more
+Le projet utilise des fichiers `.env.*` pour switcher rapidement d'environnement.
 
-To learn more about developing your project with Expo, look at the following resources:
+- DEV: `.env.development` (à partir de `.env.development.example`)
+- PROD: `.env.production` (à partir de `.env.production.example`)
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Rappel: toutes les variables `EXPO_PUBLIC_*` sont embarquées dans l'app (pas de secrets).
 
-## Join the community
+## Démarrer Expo
 
-Join our community of developers creating universal apps.
+DEV (le plus courant):
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+npm run start:dev
+```
+
+PROD (utilise l'API de prod mais tourne en dev client):
+
+```bash
+npm run start:prod
+```
+
+Optionnel: simuler un bundle "production" (minify + no-dev) avec la config prod:
+
+```bash
+npm run start:prod:bundle
+```
+
+## Lancer Android / iOS avec un env
+
+```bash
+npm run android:dev
+npm run android:prod
+```
+
+```bash
+npm run ios:dev
+npm run ios:prod
+```
+
+## Notes
+
+- Si tu n'as pas de dev build installé: `npx expo run:android` (ou `npm run android:dev`) puis ré-ouvre via `npm run start:dev`.
+- Les scripts d'env chargent explicitement le fichier choisi et désactivent le chargement automatique de `.env` par Expo pour éviter les surprises.

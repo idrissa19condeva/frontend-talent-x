@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Keyboard, Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Keyboard, Pressable, RefreshControl, ScrollView, Share, StyleSheet, View } from "react-native";
 import { Avatar, Button, Dialog, Portal, Text, TextInput, Snackbar } from "react-native-paper";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import * as Linking from "expo-linking";
 import {
     SpaceGrotesk_400Regular,
     SpaceGrotesk_500Medium,
@@ -44,6 +45,7 @@ const extractUserId = (value?: GroupUserRef | string) => {
 };
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/api\/?$/, "") ?? "";
+const WEB_BASE_URL = process.env.EXPO_PUBLIC_WEB_BASE_URL?.replace(/\/+$/, "") ?? "";
 
 const resolveProfilePhoto = (value?: string | null): string | undefined => {
     if (!value) {
@@ -502,6 +504,33 @@ export default function TrainingGroupDetailScreen() {
         setSessionPickerVisible(false);
         router.push({ pathname: "/(main)/training/create", params: { groupId } });
     }, [group?.id, id, router]);
+
+    const handleShareGroup = useCallback(async () => {
+        const groupId = group?.id || id?.toString();
+        if (!groupId) return;
+
+        const groupName = group?.name?.trim() || "un groupe";
+        const universalUrl = WEB_BASE_URL
+            ? `${WEB_BASE_URL}/groups/${groupId}`
+            : /^https?:\/\//i.test(API_BASE_URL)
+                ? `${API_BASE_URL.replace(/\/+$/, "")}/groups/${groupId}`
+                : null;
+
+        const fallbackDeepLink = Linking.createURL(`/(main)/training/groups/${groupId}`);
+        const urlToShare = universalUrl || fallbackDeepLink;
+        const message = `Rejoins ${groupName} sur Talent-X : ${urlToShare}`;
+
+        try {
+            await Share.share({ message });
+        } catch (error) {
+            console.warn("shareGroup", error);
+            openSystemDialog(
+                "Erreur",
+                "Impossible d'ouvrir le partage sur cet appareil.",
+                "error",
+            );
+        }
+    }, [group?.id, group?.name, id, openSystemDialog]);
 
     const handleJoinGroup = useCallback(async () => {
         const groupId = group?.id || id?.toString();
@@ -1071,6 +1100,15 @@ export default function TrainingGroupDetailScreen() {
                                             <View style={styles.heroNamePlate}>
                                                 <Text style={styles.heroTitle}>{group.name}</Text>
                                             </View>
+                                            <Pressable
+                                                accessibilityRole="button"
+                                                accessibilityLabel="Partager ce groupe"
+                                                onPress={handleShareGroup}
+                                                style={styles.heroShareIcon}
+                                                hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                                            >
+                                                <MaterialCommunityIcons name="share-variant" size={20} color="#02131d" />
+                                            </Pressable>
                                             {isOwner ? (
                                                 <Pressable
                                                     accessibilityRole="button"
@@ -2222,6 +2260,16 @@ const styles = StyleSheet.create({
         shadowRadius: 10,
         shadowOffset: { width: 0, height: 4 },
         elevation: 8,
+    },
+    heroShareIcon: {
+        width: 38,
+        height: 38,
+        borderRadius: 12,
+        backgroundColor: "rgba(248,250,252,0.85)",
+        alignItems: "center",
+        justifyContent: "center",
+        borderWidth: 1,
+        borderColor: "rgba(148,163,184,0.45)",
     },
     sectionCard: {
         borderRadius: 28,

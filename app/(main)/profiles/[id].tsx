@@ -3,7 +3,7 @@ import { Alert, ScrollView, StyleSheet, View, Text, Pressable, Linking, RefreshC
 import { ActivityIndicator, Button, Snackbar } from "react-native-paper";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from "expo-router";
 import ProfileHeader from "../../../src/components/profile/ProfileHeader";
 import ProfileHighlightsCard from "../../../src/components/profile/ProfileHighlightsCard";
 import ProfileSocialLinks from "../../../src/components/profile/ProfileSocialLinks";
@@ -166,7 +166,7 @@ export default function PublicProfileScreen() {
 
     const handleGoBack = useCallback(() => {
         if (returnPath) {
-            router.replace(returnPath);
+            router.replace(returnPath as Href);
             return;
         }
         if (router.canGoBack?.()) {

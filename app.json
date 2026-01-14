@@ -13,7 +13,10 @@
       "bundleIdentifier": "com.talentx.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "associatedDomains": [
+        "applinks:backend-talent-x.onrender.com"
+      ]
     },
     "android": {
       "adaptiveIcon": {
@@ -26,7 +29,24 @@
       "softwareKeyboardLayoutMode": "resize",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.talentx.app"
+      "package": "com.talentx.app",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "backend-talent-x.onrender.com",
+              "pathPrefix": "/groups"
+            }
+          ]
+        }
+      ]
     },
     "web": {
       "output": "static",
